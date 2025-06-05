@@ -37,7 +37,7 @@ if uploaded_file:
             similaridades = util.cos_sim(texto_emb, dominios_embs)[0]
             pontuacoes = [(dominios_lista[i], float(similaridades[i])) for i in range(len(dominios_lista))]
             pontuacoes.sort(key=lambda x: x[1], reverse=True)
-            top_k = [p for p in pontuacoes if p[1] > 0.4][:3]
+            top_k = [p for p in pontuacoes if p[1] > 0.3][:3]
             soma = sum(p[1] for p in top_k)
             if soma == 0:
                 return []
