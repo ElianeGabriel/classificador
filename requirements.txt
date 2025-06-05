@@ -1,4 +1,5 @@
 streamlit
+sentence-transformers
 openai
 pandas
 python-dotenv
