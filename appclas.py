@@ -13,11 +13,25 @@ def carregar_modelo():
 modelo = carregar_modelo()
 
 # ------------------------------
-# Carregar ficheiro de domínios
+# Interface de seleção do ficheiro de domínios
+# ------------------------------
+opcao_enei = st.sidebar.radio(
+    "Seleciona a versão da ENEI para classificar:",
+    ["ENEI 2030", "ENEI 2020"]
+)
+
+# Mapeamento das opções para ficheiros e sheets
+config_enei = {
+    "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios"},
+    "ENEI 2020": {"ficheiro": "descricao2020.xlsx", "sheet": "Eixos"}
+}
+
+# ------------------------------
+# Carregar ficheiro de domínios selecionado
 # ------------------------------
 @st.cache_data
-def carregar_dominios():
-    dominios_df = pd.read_excel("descricao2030.xlsx", sheet_name="Dominios")
+def carregar_dominios(ficheiro, sheet):
+    dominios_df = pd.read_excel(ficheiro, sheet_name=sheet)
     dominios_desc = {}
     for _, row in dominios_df.iterrows():
         nome = str(row['Dominios']).strip()
@@ -27,7 +41,11 @@ def carregar_dominios():
         dominios_desc[nome] = texto_completo
     return dominios_desc
 
-dominios_desc = carregar_dominios()
+dominios_desc = carregar_dominios(
+    ficheiro=config_enei[opcao_enei]["ficheiro"],
+    sheet=config_enei[opcao_enei]["sheet"]
+)
+
 dominios_lista = list(dominios_desc.keys())
 dominios_embs = modelo.encode(list(dominios_desc.values()), convert_to_tensor=True)
 
@@ -46,12 +64,10 @@ def classificar_projeto(texto):
     return [(p[0], round(100 * p[1]/soma, 2)) for p in top_k]
 
 # ------------------------------
-# Interface do utilizador
+# Interface principal
 # ------------------------------
-st.title("Classificador de Projetos SIFIDE para Domínios ENEI")
-st.markdown("Faça upload de um ficheiro Excel com a sheet 'Projetos'.")
-
-uploaded_file = st.file_uploader("Ficheiro Excel (.xlsx)", type=["xlsx"])
+st.markdown(f"### Classificação baseada na versão **{opcao_enei}**")
+uploaded_file = st.file_uploader("Faz upload do ficheiro Excel com a sheet 'Projetos':", type=["xlsx"])
 
 # ------------------------------
 # Processar ficheiro carregado
@@ -81,13 +97,13 @@ if uploaded_file:
         st.success("Classificação concluída!")
         st.dataframe(final_df)
 
-        # Exporta para download
+        # Exportar para Excel
         buffer = BytesIO()
         final_df.to_excel(buffer, index=False)
         st.download_button(
             label="📄 Download dos resultados (.xlsx)",
             data=buffer.getvalue(),
-            file_name="classificacao_dominios_llm.xlsx",
+            file_name=f"classificacao_{opcao_enei.replace(' ', '').lower()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
