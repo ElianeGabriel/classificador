@@ -73,7 +73,7 @@ def carregar_dominios_2020(ficheiro, sheet):
 
         desc = str(row.get(desc_col, '')).strip()
         area = str(row.get(area_col, '')).strip() if area_col else ''
-        texto_completo = f"{nome}. {desc}. {area}".strip()
+        texto_completo = f"{nome}. Área de atuação: {area}. {desc}".strip()
         dominios_desc[nome] = texto_completo
 
     return dominios_desc
