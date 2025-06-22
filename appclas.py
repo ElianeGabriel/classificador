@@ -116,42 +116,62 @@ st.markdown(f"### Classificação baseada na versão **{opcao_enei}**")
 uploaded_file = st.file_uploader("Faz upload do ficheiro Excel com a sheet 'Projetos':", type=["xlsx"])
 
 # ------------------------------
-# Processar ficheiro carregado
+# Processar ficheiro carregado com seleção de sheet e colunas
 # ------------------------------
 if uploaded_file:
     try:
-        projetos_df = pd.read_excel(uploaded_file, sheet_name="Projetos")
+        # Carrega todas as sheets do Excel
+        xls = pd.ExcelFile(uploaded_file)
+        sheet_name = st.selectbox("📄 Escolhe a sheet do ficheiro", xls.sheet_names)
+        projetos_df = pd.read_excel(xls, sheet_name=sheet_name)
 
-        resultados = []
-        for _, row in projetos_df.iterrows():
-            titulo = str(row.get("Designacao Projecto", ""))
-            resumo = str(row.get("Sumario Executivo", ""))
-            texto = f"{titulo}. {resumo}"
-            dominios_previstos = classificar_projeto(texto)
+        st.markdown("### 🧩 Seleciona as colunas a utilizar para classificação")
 
-            linha = {
-                "Projeto": titulo,
-                "Resumo": resumo
-            }
-            for i, (dom, score) in enumerate(dominios_previstos):
-                linha[f"Domínio {i+1}"] = dom
-                linha[f"% {i+1}"] = score
+        colunas_disponiveis = projetos_df.columns.tolist()
+        col_titulo = st.selectbox("📝 Coluna com o título do projeto", colunas_disponiveis)
+        col_resumo = st.selectbox("📋 Coluna com o resumo/descrição", colunas_disponiveis)
 
-            resultados.append(linha)
-
-        final_df = pd.DataFrame(resultados)
-        st.success("Classificação concluída!")
-        st.dataframe(final_df)
-
-        # Exportar para Excel
-        buffer = BytesIO()
-        final_df.to_excel(buffer, index=False)
-        st.download_button(
-            label="📄 Download dos resultados (.xlsx)",
-            data=buffer.getvalue(),
-            file_name=f"classificacao_{opcao_enei.replace(' ', '').lower()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        # Quantos projetos classificar
+        limite_opcao = st.radio(
+            "Quantos projetos queres classificar?",
+            ["Todos", "10", "20", "50", "100"]
         )
 
+        if limite_opcao != "Todos":
+            limite = int(limite_opcao)
+            projetos_df = projetos_df.head(limite)
+
+        if st.button("🚀 Classificar projetos"):
+            resultados = []
+            for _, row in projetos_df.iterrows():
+                titulo = str(row.get(col_titulo, ""))
+                resumo = str(row.get(col_resumo, ""))
+                texto = f"{titulo}. {resumo}"
+                dominios_previstos = classificar_projeto(texto)
+
+                linha = {
+                    "Projeto": titulo,
+                    "Resumo": resumo
+                }
+                for i, (dom, score) in enumerate(dominios_previstos):
+                    linha[f"Domínio {i+1}"] = dom
+                    linha[f"% {i+1}"] = score
+
+                resultados.append(linha)
+
+            final_df = pd.DataFrame(resultados)
+            st.success("Classificação concluída!")
+            st.dataframe(final_df)
+
+            # Exportar para Excel
+            buffer = BytesIO()
+            final_df.to_excel(buffer, index=False)
+            st.download_button(
+                label="📄 Download dos resultados (.xlsx)",
+                data=buffer.getvalue(),
+                file_name=f"classificacao_{opcao_enei.replace(' ', '').lower()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
     except Exception as e:
-        st.error(f"Erro ao processar o ficheiro: {e}")
+        st.error(f"❌ Erro ao processar o ficheiro: {e}")
