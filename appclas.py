@@ -1,47 +1,64 @@
 import streamlit as st
 import pandas as pd
 from sentence_transformers import SentenceTransformer, util
+from io import BytesIO
 
-# Inicializar modelo
+# ------------------------------
+# Inicializar modelo com cache
+# ------------------------------
 @st.cache_resource
-
 def carregar_modelo():
     return SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 
 modelo = carregar_modelo()
 
+# ------------------------------
+# Carregar ficheiro de domínios
+# ------------------------------
+@st.cache_data
+def carregar_dominios():
+    dominios_df = pd.read_excel("descricao2030.xlsx", sheet_name="Dominios")
+    dominios_desc = {}
+    for _, row in dominios_df.iterrows():
+        nome = str(row['Dominios']).strip()
+        area = str(row.get('Principal área de atuação (Opções de Resposta)', ''))
+        desc = str(row.get('Descrição', ''))
+        texto_completo = f"{nome}. {area}. {desc}"
+        dominios_desc[nome] = texto_completo
+    return dominios_desc
+
+dominios_desc = carregar_dominios()
+dominios_lista = list(dominios_desc.keys())
+dominios_embs = modelo.encode(list(dominios_desc.values()), convert_to_tensor=True)
+
+# ------------------------------
+# Função para classificar projetos
+# ------------------------------
+def classificar_projeto(texto):
+    texto_emb = modelo.encode(texto, convert_to_tensor=True)
+    similaridades = util.cos_sim(texto_emb, dominios_embs)[0]
+    pontuacoes = [(dominios_lista[i], float(similaridades[i])) for i in range(len(dominios_lista))]
+    pontuacoes.sort(key=lambda x: x[1], reverse=True)
+    top_k = [p for p in pontuacoes if p[1] > 0.3][:3]
+    soma = sum(p[1] for p in top_k)
+    if soma == 0:
+        return []
+    return [(p[0], round(100 * p[1]/soma, 2)) for p in top_k]
+
+# ------------------------------
+# Interface do utilizador
+# ------------------------------
 st.title("Classificador de Projetos SIFIDE para Domínios ENEI")
-st.markdown("Faça upload de um ficheiro Excel com as sheets 'Projetos' e 'Dominios'.")
+st.markdown("Faça upload de um ficheiro Excel com a sheet 'Projetos'.")
 
 uploaded_file = st.file_uploader("Ficheiro Excel (.xlsx)", type=["xlsx"])
 
+# ------------------------------
+# Processar ficheiro carregado
+# ------------------------------
 if uploaded_file:
     try:
-        xls = pd.ExcelFile(uploaded_file)
-        projetos_df = xls.parse("Projetos")
-        dominios_df = xls.parse("Dominios")
-
-        dominios_desc = {}
-        for _, row in dominios_df.iterrows():
-            nome = str(row['Dominios']).strip()
-            area = str(row.get('Principal área de atuação (Opções de Resposta)', ''))
-            desc = str(row.get('Descrição', ''))
-            texto_completo = f"{nome}. {area}. {desc}"
-            dominios_desc[nome] = texto_completo
-
-        dominios_lista = list(dominios_desc.keys())
-        dominios_embs = modelo.encode(list(dominios_desc.values()), convert_to_tensor=True)
-
-        def classificar_projeto(texto):
-            texto_emb = modelo.encode(texto, convert_to_tensor=True)
-            similaridades = util.cos_sim(texto_emb, dominios_embs)[0]
-            pontuacoes = [(dominios_lista[i], float(similaridades[i])) for i in range(len(dominios_lista))]
-            pontuacoes.sort(key=lambda x: x[1], reverse=True)
-            top_k = [p for p in pontuacoes if p[1] > 0.3][:3]
-            soma = sum(p[1] for p in top_k)
-            if soma == 0:
-                return []
-            return [(p[0], round(100 * p[1]/soma, 2)) for p in top_k]
+        projetos_df = pd.read_excel(uploaded_file, sheet_name="Projetos")
 
         resultados = []
         for _, row in projetos_df.iterrows():
@@ -65,7 +82,6 @@ if uploaded_file:
         st.dataframe(final_df)
 
         # Exporta para download
-        from io import BytesIO
         buffer = BytesIO()
         final_df.to_excel(buffer, index=False)
         st.download_button(
