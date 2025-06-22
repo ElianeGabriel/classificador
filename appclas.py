@@ -27,10 +27,10 @@ config_enei = {
 }
 
 # ------------------------------
-# Carregar ficheiro de domínios selecionado
+# Função para ENEI 2030 (mantida como está)
 # ------------------------------
 @st.cache_data
-def carregar_dominios(ficheiro, sheet):
+def carregar_dominios_2030(ficheiro, sheet):
     dominios_df = pd.read_excel(ficheiro, sheet_name=sheet)
     dominios_desc = {}
     for _, row in dominios_df.iterrows():
@@ -41,10 +41,56 @@ def carregar_dominios(ficheiro, sheet):
         dominios_desc[nome] = texto_completo
     return dominios_desc
 
-dominios_desc = carregar_dominios(
-    ficheiro=config_enei[opcao_enei]["ficheiro"],
-    sheet=config_enei[opcao_enei]["sheet"]
-)
+# ------------------------------
+# Nova função para ENEI 2020
+# ------------------------------
+@st.cache_data
+def carregar_dominios_2020(ficheiro, sheet):
+    dominios_df = pd.read_excel(ficheiro, sheet_name=sheet)
+    dominios_df.dropna(how="all", inplace=True)
+
+    # Normaliza os nomes das colunas
+    colunas_originais = dominios_df.columns.tolist()
+    colunas_normalizadas = [c.strip().lower() for c in colunas_originais]
+    col_map = dict(zip(colunas_normalizadas, colunas_originais))
+
+    nome_col = col_map.get("dominios")
+    desc_col = col_map.get("descrição")
+    area_col = col_map.get("principal área de atuação (opções de resposta)")
+
+    if not nome_col or not desc_col:
+        raise ValueError(
+            f"❌ Colunas obrigatórias não encontradas.\n"
+            f"Esperadas: 'Dominios' e 'Descrição'.\n"
+            f"Colunas disponíveis: {colunas_originais}"
+        )
+
+    dominios_desc = {}
+    for _, row in dominios_df.iterrows():
+        nome = str(row.get(nome_col, '')).strip()
+        if not nome:
+            continue
+
+        desc = str(row.get(desc_col, '')).strip()
+        area = str(row.get(area_col, '')).strip() if area_col else ''
+        texto_completo = f"{nome}. {desc}. {area}".strip()
+        dominios_desc[nome] = texto_completo
+
+    return dominios_desc
+
+# ------------------------------
+# Carregar domínios conforme versão selecionada
+# ------------------------------
+if opcao_enei == "ENEI 2030":
+    dominios_desc = carregar_dominios_2030(
+        ficheiro=config_enei["ENEI 2030"]["ficheiro"],
+        sheet=config_enei["ENEI 2030"]["sheet"]
+    )
+else:
+    dominios_desc = carregar_dominios_2020(
+        ficheiro=config_enei["ENEI 2020"]["ficheiro"],
+        sheet=config_enei["ENEI 2020"]["sheet"]
+    )
 
 dominios_lista = list(dominios_desc.keys())
 dominios_embs = modelo.encode(list(dominios_desc.values()), convert_to_tensor=True)
