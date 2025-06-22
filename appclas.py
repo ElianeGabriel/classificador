@@ -32,34 +32,13 @@ config_enei = {
 @st.cache_data
 def carregar_dominios(ficheiro, sheet):
     dominios_df = pd.read_excel(ficheiro, sheet_name=sheet)
-
-    # Limpar linhas totalmente em branco
-    dominios_df.dropna(how="all", inplace=True)
-
-    # Identificar colunas esperadas (em qualquer ordem)
-    colunas = dominios_df.columns.str.strip().str.lower()
-    col_map = {c.lower(): c for c in dominios_df.columns}
-
-    nome_col = col_map.get("dominios", None)
-    desc_col = col_map.get("descrição", None)
-    area_col = col_map.get("principal área de atuação (opções de resposta)", None)
-
-    if not nome_col or not desc_col:
-        raise ValueError("Colunas obrigatórias ('Dominios' e 'Descrição') não encontradas no ficheiro.")
-
     dominios_desc = {}
     for _, row in dominios_df.iterrows():
-        nome = str(row.get(nome_col, '')).strip()
-        if not nome:
-            continue  # Ignora linhas sem nome de domínio
-
-        desc = str(row.get(desc_col, '')).strip()
-        area = str(row.get(area_col, '')).strip() if area_col else ''
-
-        # Combina tudo numa única string
-        texto_completo = f"{nome}. {desc}. {area}"
+        nome = str(row['Dominios']).strip()
+        area = str(row.get('Principal área de atuação (Opções de Resposta)', ''))
+        desc = str(row.get('Descrição', ''))
+        texto_completo = f"{nome}. {area}. {desc}"
         dominios_desc[nome] = texto_completo
-
     return dominios_desc
 
 dominios_desc = carregar_dominios(
