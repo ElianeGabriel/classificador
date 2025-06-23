@@ -5,3 +5,4 @@ pandas
 python-dotenv
 xlsxwriter
 openpyxl
+openai>=1.0.0
