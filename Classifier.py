@@ -1,95 +1,112 @@
 import streamlit as st
 import pandas as pd
-import random
+import openai
+import os
 from io import BytesIO
 
-# 🎨 Configuração de página
-st.set_page_config(page_title="Classificador de Projetos I&D", layout="wide")
+# ------------------------------
+# CONFIGURAR API KEY (usa variável de ambiente)
+# ------------------------------
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-st.markdown("""
-    <style>
-        .main { background-color: #f9f9f9; padding: 2rem; }
-        .block-container { padding-top: 1rem; }
-        .stButton > button { background-color: #4CAF50; color: white; }
-    </style>
-""", unsafe_allow_html=True)
+# ------------------------------
+# Função utilitária: preparar prompt para o modelo
+# ------------------------------
+def preparar_prompt(titulo, resumo, dominios):
+    prompt = """
+Classifica o projeto abaixo num dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente (ENEI 2020):
 
-st.title("🔎 Classificador de Projetos I&D")
-st.markdown("Classifique projetos com base no **Sumário Executivo** e nos **Domínios Prioritários** definidos.")
+{lista_dominios}
 
-# 📤 Upload de ficheiro
-uploaded_file = st.file_uploader("Carregue o ficheiro Excel com os projetos e os domínios prioritários:", type=["xlsx"])
+Projeto:
+Título: {titulo}
+Descrição: {resumo}
+
+Responde apenas com o nome exato do domínio mais adequado, sem explicações. Se não conseguires decidir com certeza, responde com "Indefinido".
+""".format(
+        lista_dominios="\n".join([f"- {d}" for d in dominios]),
+        titulo=titulo.strip(),
+        resumo=resumo.strip()
+    )
+    return prompt.strip()
+
+# ------------------------------
+# Carregar domínios da ENEI 2020
+# ------------------------------
+def carregar_dominios_2020():
+    df = pd.read_excel("descricao2020.xlsx", sheet_name=0)
+    df.dropna(subset=['Dominios'], inplace=True)
+    return df['Dominios'].unique().tolist()
+
+# ------------------------------
+# Classificação com GPT
+# ------------------------------
+def classificar_llm(texto_prompt):
+    try:
+        resposta = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "user", "content": texto_prompt}
+            ],
+            temperature=0
+        )
+        return resposta['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        return f"Erro: {e}"
+
+# ------------------------------
+# Interface Streamlit
+# ------------------------------
+st.markdown("### Classificação com LLM usando GPT-3.5 (OpenAI)")
+uploaded_file = st.file_uploader("📁 Faz upload do ficheiro de projetos reais:", type=["xlsx"])
 
 if uploaded_file:
-    # 📚 Ler ficheiro Excel
-    xls = pd.ExcelFile(uploaded_file)
     try:
-        projetos_df = xls.parse("Projetos")
-        dominios_df = xls.parse("Dominios")
-    except Exception as e:
-        st.error(f"❌ Erro ao ler as folhas 'Projetos' ou 'Dominios': {e}")
-        st.stop()
+        # Ler o ficheiro Excel carregado
+        xls = pd.ExcelFile(uploaded_file)
+        sheet = st.selectbox("📄 Escolhe a sheet com os projetos:", xls.sheet_names)
+        df = pd.read_excel(xls, sheet_name=sheet)
 
-    if "Sumario Executivo" not in projetos_df.columns:
-        st.error("❗ A folha 'Projetos' precisa da coluna 'Sumario Executivo'.")
-        st.stop()
+        # Verifica colunas
+        colunas = df.columns.tolist()
+        col_titulo = st.selectbox("📝 Coluna do título do projeto:", colunas, index=colunas.index("Designacao Projecto") if "Designacao Projecto" in colunas else 0)
+        col_resumo = st.selectbox("📋 Coluna da descrição:", colunas, index=colunas.index("Sumario Executivo") if "Sumario Executivo" in colunas else 0)
 
-    # 🔄 Processar os domínios
-    domain_options = []
-    current_domain = None
-    current_description = []
+        limite_opcao = st.radio("Quantos projetos queres classificar?", ["Todos", "10", "20", "50", "100"])
+        if limite_opcao != "Todos":
+            limite = int(limite_opcao)
+            df = df.head(limite)
 
-    for _, row in dominios_df.iterrows():
-        domain = row["Dominios"]
-        description = str(row["Descrição"]).strip() if pd.notna(row.get("Descrição")) else ""
+        dominios_enei = carregar_dominios_2020()
 
-        if pd.notna(domain) and domain.strip():
-            if current_domain:
-                full_description = " ".join(current_description).strip()
-                domain_options.append(f"{current_domain} - {full_description}")
-            current_domain = domain.strip()
-            current_description = [description] if description else []
-        else:
-            if description:
-                current_description.append(description)
+        if st.button("🚀 Classificar com LLM"):
+            resultados = []
+            with st.spinner("A classificar projetos com LLM..."):
+                for _, row in df.iterrows():
+                    titulo = str(row.get(col_titulo, ""))
+                    resumo = str(row.get(col_resumo, ""))
+                    prompt = preparar_prompt(titulo, resumo, dominios_enei)
+                    classificacao = classificar_llm(prompt)
 
-    if current_domain:
-        full_description = " ".join(current_description).strip()
-        domain_options.append(f"{current_domain} - {full_description}")
+                    resultados.append({
+                        "NIPC": row.get("NIPC", ""),
+                        "Projeto": titulo,
+                        "Resumo": resumo,
+                        "Domínio LLM": classificacao
+                    })
 
-    # 🤖 Função simulada de classificação
-    def classify_project(summary):
-        possible_domains = [opt.split(" - ")[0] for opt in domain_options]
-        return random.choice(possible_domains)
+            final_df = pd.DataFrame(resultados)
+            st.success("✅ Classificação concluída com LLM!")
+            st.dataframe(final_df)
 
-    # 🚀 Botão de classificação
-    if st.button("🚀 Classificar Projetos"):
-        with st.spinner("A classificar projetos..."):
-            results = []
-            for idx, row in projetos_df.iterrows():
-                summary = row["Sumario Executivo"]
-                domain = classify_project(summary)
-                results.append({
-                    "ID": idx + 1,
-                    "Sumario Executivo": summary,
-                    "Domínio Classificado": domain
-                })
-
-            result_df = pd.DataFrame(results)
-
-            st.success("✅ Classificação concluída!")
-            st.dataframe(result_df, use_container_width=True)
-
-            # 📁 Preparar ficheiro para download
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                projetos_df.to_excel(writer, index=False, sheet_name='Projetos')
-                dominios_df.to_excel(writer, index=False, sheet_name='Dominios')
-                result_df.to_excel(writer, index=False, sheet_name='Classificação')
-
+            buffer = BytesIO()
+            final_df.to_excel(buffer, index=False)
             st.download_button(
-                label="📥 Descarregar Excel com classificação",
-                data=output.getvalue(),
-                file_name="classificacao_projetos.xlsx",
+                label="📄 Download dos resultados (.xlsx)",
+                data=buffer.getvalue(),
+                file_name="classificacao_llm_enei2020.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+    except Exception as e:
+        st.error(f"Erro ao processar: {e}")
