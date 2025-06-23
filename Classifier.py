@@ -66,7 +66,7 @@ if uploaded_file:
     dominios_enei = carregar_dominios_2020()
 
     st.markdown("### ⚙️ Quantos projetos queres classificar?")
-    opcao_modo = st.radio("Modo:", ["Teste (1 projeto)", "10", "20", "50", "Todos"])
+    opcao_modo = st.radio("Modo:", ["Teste (1 projeto)", "5", "10", "20", "50", "Todos"])
     
     if opcao_modo == "Teste (1 projeto)":
         df = df.head(1)
