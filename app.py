@@ -1,4 +1,6 @@
 import streamlit as st
+import importlib.util
+import sys
 
 # Configurações iniciais da app
 st.set_page_config(page_title="Classificador de Projetos SIFIDE", layout="wide")
@@ -10,9 +12,7 @@ modo_app = st.sidebar.radio(
     ["🔍 Classificação", "📈 Métricas e Visualizações"]
 )
 
-import importlib.util
-import sys
-
+# Função para carregar e executar um módulo externo
 def carregar_modulo(nome_ficheiro, nome_modulo):
     spec = importlib.util.spec_from_file_location(nome_modulo, nome_ficheiro)
     modulo = importlib.util.module_from_spec(spec)
@@ -20,6 +20,7 @@ def carregar_modulo(nome_ficheiro, nome_modulo):
     spec.loader.exec_module(modulo)
     return modulo
 
+# Classificação
 if modo_app == "🔍 Classificação":
     tipo_classificador = st.sidebar.selectbox(
         "Escolhe o tipo de classificador:",
@@ -34,6 +35,7 @@ if modo_app == "🔍 Classificação":
         st.subheader("🤖 Modo com Modelo de Linguagem (LLM)")
         carregar_modulo("appclas.py", "appclas")
 
+# Avaliação
 elif modo_app == "📈 Métricas e Visualizações":
     st.subheader("📈 Avaliação das Classificações (LLM vs Manual)")
     carregar_modulo("metrics.py", "metrics")
