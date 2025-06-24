@@ -69,7 +69,7 @@ def extrair_dominios_e_percentagens(resposta):
 # ------------------------------
 # INTERFACE
 # ------------------------------
-st.markdown("### OpenAI GPT4o)")
+#st.markdown("### OpenAI GPT4o)")
 
 # Escolher versão ENEI
 versao_enei = st.sidebar.radio("Seleciona a versão da ENEI:", ["ENEI 2020", "ENEI 2030"])
