@@ -1,177 +1,160 @@
 import streamlit as st
 import pandas as pd
-from sentence_transformers import SentenceTransformer, util
+import openai
+import os
 from io import BytesIO
+import re
 
 # ------------------------------
-# Inicializar modelo com cache
+# API KEY (por variável de ambiente segura)
 # ------------------------------
-@st.cache_resource
-def carregar_modelo():
-    return SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-
-modelo = carregar_modelo()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # ------------------------------
-# Interface de seleção do ficheiro de domínios
+# Preparar o prompt para o LLM
 # ------------------------------
-opcao_enei = st.sidebar.radio(
-    "Seleciona a versão da ENEI para classificar:",
-    ["ENEI 2030", "ENEI 2020"]
-)
+def preparar_prompt(titulo, resumo, dominios):
+    prompt = f"""
+Classifica o projeto abaixo num ou dois dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente ({st.session_state.get('versao_enei', 'ENEI')}):
 
-# Mapeamento das opções para ficheiros e sheets
+{chr(10).join([f"- {d}" for d in dominios])}
+
+Projeto:
+Título: {titulo}
+Descrição: {resumo}
+
+Responde com os dois domínios mais adequados por ordem de relevância, seguidos da percentagem estimada (ex: 1. Saúde (60%), 2. Energia (40%)). Se não conseguires decidir com certeza, responde apenas com "Indefinido".
+""".strip()
+    return prompt
+
+# ------------------------------
+# Carregar domínios da ENEI
+# ------------------------------
+def carregar_dominios(ficheiro, sheet):
+    df = pd.read_excel(ficheiro, sheet_name=sheet)
+    df.dropna(subset=['Dominios'], inplace=True)
+    return df['Dominios'].unique().tolist()
+
+# ------------------------------
+# Função para classificar com OpenAI LLM
+# ------------------------------
+def classificar_llm(prompt_texto):
+    try:
+        resposta = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt_texto}],
+            temperature=0
+        )
+        return resposta.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Erro: {e}"
+
+# ------------------------------
+# Extrair domínios e percentagens da resposta
+# ------------------------------
+def extrair_dominios_e_percentagens(resposta):
+    if resposta.lower().strip() == "indefinido":
+        return ("Indefinido", "", "", "")
+
+    padrao = r"\d+\.\s*(.*?)\s*\((\d+)%\)"
+    correspondencias = re.findall(padrao, resposta)
+
+    if len(correspondencias) >= 2:
+        return correspondencias[0][0], correspondencias[0][1], correspondencias[1][0], correspondencias[1][1]
+    elif len(correspondencias) == 1:
+        return correspondencias[0][0], correspondencias[0][1], "", ""
+    else:
+        return resposta, "", "", ""
+
+# ------------------------------
+# INTERFACE
+# ------------------------------
+st.markdown("### 🧠 Classificação com LLM (OpenAI API)")
+
+# Escolher versão ENEI
+versao_enei = st.sidebar.radio("Seleciona a versão da ENEI:", ["ENEI 2020", "ENEI 2030"])
+st.session_state["versao_enei"] = versao_enei
+
 config_enei = {
-    "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios"},
-    "ENEI 2020": {"ficheiro": "descricao2020.xlsx", "sheet": "Eixos"}
+    "ENEI 2020": {"ficheiro": "descricao2020.xlsx", "sheet": "Eixos"},
+    "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios"}
 }
 
-# ------------------------------
-# Função para ENEI 2030 (mantida como está)
-# ------------------------------
-@st.cache_data
-def carregar_dominios_2030(ficheiro, sheet):
-    dominios_df = pd.read_excel(ficheiro, sheet_name=sheet)
-    dominios_desc = {}
-    for _, row in dominios_df.iterrows():
-        nome = str(row['Dominios']).strip()
-        area = str(row.get('Principal área de atuação (Opções de Resposta)', ''))
-        desc = str(row.get('Descrição', ''))
-        texto_completo = f"{nome}. {area}. {desc}"
-        dominios_desc[nome] = texto_completo
-    return dominios_desc
+# Upload do ficheiro com projetos reais
+uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xlsx):", type=["xlsx"])
 
-# ------------------------------
-# Nova função para ENEI 2020
-# ------------------------------
-@st.cache_data
-def carregar_dominios_2020(ficheiro, sheet):
-    dominios_df = pd.read_excel(ficheiro, sheet_name=sheet)
-    dominios_df.dropna(how="all", inplace=True)
-
-    # Normaliza os nomes das colunas
-    colunas_originais = dominios_df.columns.tolist()
-    colunas_normalizadas = [c.strip().lower() for c in colunas_originais]
-    col_map = dict(zip(colunas_normalizadas, colunas_originais))
-
-    nome_col = col_map.get("dominios")
-    desc_col = col_map.get("descrição")
-    area_col = col_map.get("principal área de atuação (opções de resposta)")
-
-    if not nome_col or not desc_col:
-        raise ValueError(
-            f"❌ Colunas obrigatórias não encontradas.\n"
-            f"Esperadas: 'Dominios' e 'Descrição'.\n"
-            f"Colunas disponíveis: {colunas_originais}"
-        )
-
-    dominios_desc = {}
-    for _, row in dominios_df.iterrows():
-        nome = str(row.get(nome_col, '')).strip()
-        if not nome:
-            continue
-
-        desc = str(row.get(desc_col, '')).strip()
-        area = str(row.get(area_col, '')).strip() if area_col else ''
-        texto_completo = f"{nome}. {desc}. {area}".strip()
-        dominios_desc[nome] = texto_completo
-
-    return dominios_desc
-
-# ------------------------------
-# Carregar domínios conforme versão selecionada
-# ------------------------------
-if opcao_enei == "ENEI 2030":
-    dominios_desc = carregar_dominios_2030(
-        ficheiro=config_enei["ENEI 2030"]["ficheiro"],
-        sheet=config_enei["ENEI 2030"]["sheet"]
-    )
-else:
-    dominios_desc = carregar_dominios_2020(
-        ficheiro=config_enei["ENEI 2020"]["ficheiro"],
-        sheet=config_enei["ENEI 2020"]["sheet"]
-    )
-
-dominios_lista = list(dominios_desc.keys())
-dominios_embs = modelo.encode(list(dominios_desc.values()), convert_to_tensor=True)
-
-# ------------------------------
-# Função para classificar projetos
-# ------------------------------
-def classificar_projeto(texto):
-    texto_emb = modelo.encode(texto, convert_to_tensor=True)
-    similaridades = util.cos_sim(texto_emb, dominios_embs)[0]
-    pontuacoes = [(dominios_lista[i], float(similaridades[i])) for i in range(len(dominios_lista))]
-    pontuacoes.sort(key=lambda x: x[1], reverse=True)
-    top_k = [p for p in pontuacoes if p[1] > 0.3][:3]
-    soma = sum(p[1] for p in top_k)
-    if soma == 0:
-        return []
-    return [(p[0], round(100 * p[1]/soma, 2)) for p in top_k]
-
-# ------------------------------
-# Interface principal
-# ------------------------------
-st.markdown(f"### Classificação baseada na versão **{opcao_enei}**")
-uploaded_file = st.file_uploader("Faz upload do ficheiro Excel com a sheet 'Projetos':", type=["xlsx"])
-
-# ------------------------------
-# Processar ficheiro carregado com seleção de sheet e colunas
-# ------------------------------
 if uploaded_file:
-    try:
-        # Carrega todas as sheets do Excel
-        xls = pd.ExcelFile(uploaded_file)
-        sheet_name = st.selectbox("📄 Escolhe a sheet do ficheiro", xls.sheet_names)
-        projetos_df = pd.read_excel(xls, sheet_name=sheet_name)
+    xls = pd.ExcelFile(uploaded_file)
+    sheet = st.selectbox("📄 Escolhe a folha (sheet):", xls.sheet_names)
+    df = pd.read_excel(xls, sheet_name=sheet)
 
-        st.markdown("### 🧩 Seleciona as colunas a utilizar para classificação")
+    colunas = df.columns.tolist()
+    col_titulo = st.selectbox("📝 Coluna do título:", colunas, index=colunas.index("Designacao Projecto") if "Designacao Projecto" in colunas else 0)
+    col_resumo = st.selectbox("📋 Coluna da descrição/resumo:", colunas, index=colunas.index("Sumario Executivo") if "Sumario Executivo" in colunas else 0)
 
-        colunas_disponiveis = projetos_df.columns.tolist()
-        col_titulo = st.selectbox("📝 Coluna com o título do projeto", colunas_disponiveis)
-        col_resumo = st.selectbox("📋 Coluna com o resumo/descrição", colunas_disponiveis)
+    # Classificações manuais (opcional)
+    col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI") + 1 if "Dominio ENEI" in colunas else 0)
+    col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI Projecto") + 1 if "Dominio ENEI Projecto" in colunas else 0)
 
-        # Quantos projetos classificar
-        limite_opcao = st.radio(
-            "Quantos projetos queres classificar?",
-            ["Todos", "10", "20", "50", "100"]
-        )
+    dominios = carregar_dominios(config_enei[versao_enei]["ficheiro"], config_enei[versao_enei]["sheet"])
 
-        if limite_opcao != "Todos":
-            limite = int(limite_opcao)
-            projetos_df = projetos_df.head(limite)
+    st.markdown("### ⚙️ Quantos projetos queres classificar?")
+    opcao_modo = st.radio("Modo:", ["Teste (1 projeto)", "5", "10", "20", "50", "Todos"])
 
-        if st.button("🚀 Classificar projetos"):
-            resultados = []
-            for _, row in projetos_df.iterrows():
+    if opcao_modo == "Teste (1 projeto)":
+        df = df.head(1)
+    elif opcao_modo != "Todos":
+        df = df.head(int(opcao_modo))
+
+    # Estimativa de tokens
+    n_proj = len(df)
+    tokens_por_proj = 610
+    total_tokens = n_proj * tokens_por_proj
+    st.info(f"🧮 Estimativa: {total_tokens} tokens (aprox.) para {n_proj} projetos")
+
+    # Botão para classificar
+    if st.button("🚀 Classificar com LLM"):
+        resultados = []
+        with st.spinner("A classificar projetos..."):
+            for _, row in df.iterrows():
                 titulo = str(row.get(col_titulo, ""))
                 resumo = str(row.get(col_resumo, ""))
-                texto = f"{titulo}. {resumo}"
-                dominios_previstos = classificar_projeto(texto)
+                prompt = preparar_prompt(titulo, resumo, dominios)
+                resposta = classificar_llm(prompt)
+                d1, p1, d2, p2 = extrair_dominios_e_percentagens(resposta)
 
                 linha = {
+                    "NIPC": row.get("NIPC", ""),
                     "Projeto": titulo,
-                    "Resumo": resumo
+                    "Resumo": resumo,
+                    "Domínio LLM 1": d1,
+                    "% 1": p1,
+                    "Domínio LLM 2": d2,
+                    "% 2": p2
                 }
-                for i, (dom, score) in enumerate(dominios_previstos):
-                    linha[f"Domínio {i+1}"] = dom
-                    linha[f"% {i+1}"] = score
+
+                if col_manual1 != "Nenhuma":
+                    linha["Classificação Manual 1"] = row.get(col_manual1, "")
+                if col_manual2 != "Nenhuma":
+                    linha["Classificação Manual 2"] = row.get(col_manual2, "")
 
                 resultados.append(linha)
 
-            final_df = pd.DataFrame(resultados)
-            st.success("Classificação concluída!")
-            st.dataframe(final_df)
+        final_df = pd.DataFrame(resultados)
+        final_df.index += 1
+        st.session_state["classificacoes_llm"] = final_df
 
-            # Exportar para Excel
-            buffer = BytesIO()
-            final_df.to_excel(buffer, index=False)
-            st.download_button(
-                label="📄 Download dos resultados (.xlsx)",
-                data=buffer.getvalue(),
-                file_name=f"classificacao_{opcao_enei.replace(' ', '').lower()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+    # Mostrar resultados
+    if "classificacoes_llm" in st.session_state:
+        st.success("✅ Classificação concluída com sucesso!")
+        st.markdown("### 🔎 Resultados")
+        st.dataframe(st.session_state["classificacoes_llm"], use_container_width=True)
 
-    except Exception as e:
-        st.error(f"❌ Erro ao processar o ficheiro: {e}")
+        buffer = BytesIO()
+        st.session_state["classificacoes_llm"].to_excel(buffer, index=False)
+        st.download_button(
+            label="📥 Download (.xlsx)",
+            data=buffer.getvalue(),
+            file_name=f"classificacao_llm_{versao_enei.replace(' ', '').lower()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
