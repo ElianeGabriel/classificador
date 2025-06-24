@@ -5,7 +5,7 @@ from sklearn.metrics import classification_report, confusion_matrix
 import seaborn as sns
 from io import BytesIO
 
-st.markdown("### 📊 Avaliação das Classificações com LLM")
+#st.markdown("### 📊 Avaliação das Classificações com LLM")
 
 # Tenta carregar os dados da sessão, se existirem
 if "classificacoes_llm" in st.session_state:
