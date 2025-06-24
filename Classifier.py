@@ -1,69 +1,23 @@
-import streamlit as st
-import pandas as pd
-import openai
-import os
-from io import BytesIO
-
-# ------------------------------
-# API KEY (por variável de ambiente segura)
-# ------------------------------
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# ------------------------------
-# Preparar o prompt para o LLM
-# ------------------------------
-def preparar_prompt(titulo, resumo, dominios):
-    prompt = f"""
-Classifica o projeto abaixo num dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente (ENEI 2020):
-
-{chr(10).join([f"- {d}" for d in dominios])}
-
-Projeto:
-Título: {titulo}
-Descrição: {resumo}
-
-Responde apenas com o nome exato do domínio mais adequado, sem explicações. Se não conseguires decidir com certeza, responde com \"Indefinido\".
-""".strip()
-    return prompt
-
-# ------------------------------
-# Carregar os domínios da ENEI 2020
-# ------------------------------
-def carregar_dominios_2020():
-    df = pd.read_excel("descricao2020.xlsx", sheet_name=0)
-    df.dropna(subset=['Dominios'], inplace=True)
-    return df['Dominios'].unique().tolist()
-
-# ------------------------------
-# Função para classificar com OpenAI LLM
-# ------------------------------
-def classificar_llm(prompt_texto):
-    try:
-        resposta = openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt_texto}],
-            temperature=0
-        )
-        return resposta.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Erro: {e}"
-
-# ------------------------------
-# INTERFACE
-# ------------------------------
-st.markdown("### 🧠 Classificação com LLM (OpenAI API)")
-uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xlsx):", type=["xlsx"])
-
 if uploaded_file:
     xls = pd.ExcelFile(uploaded_file)
-    sheet = st.selectbox("📄 Escolhe a folha (sheet):", xls.sheet_names)
-    df = pd.read_excel(xls, sheet_name=sheet)
+
+    st.markdown("### 📄 Seleção das folhas (sheets)")
+    sheet_titulo = st.selectbox("📝 Escolhe a folha com os títulos:", xls.sheet_names, key="sheet_titulo")
+    sheet_resumo = st.selectbox("📋 Escolhe a folha com os resumos:", xls.sheet_names, key="sheet_resumo")
+
+    df_titulo = pd.read_excel(xls, sheet_name=sheet_titulo)
+    df_resumo = pd.read_excel(xls, sheet_name=sheet_resumo)
+
+    # Identificador comum
+    colunas_comuns = list(set(df_titulo.columns).intersection(set(df_resumo.columns)))
+    col_id = st.selectbox("🔗 Coluna para juntar as folhas (identificador comum):", colunas_comuns)
+
+    df = pd.merge(df_titulo, df_resumo, on=col_id, how="inner")
 
     colunas = df.columns.tolist()
     col_titulo = st.selectbox("📝 Coluna do título:", colunas, index=colunas.index("Designacao Projecto") if "Designacao Projecto" in colunas else 0)
     col_resumo = st.selectbox("📋 Coluna da descrição/resumo:", colunas, index=colunas.index("Sumario Executivo") if "Sumario Executivo" in colunas else 0)
 
-    # Classificações manuais (se existirem)
     col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI") + 1 if "Dominio ENEI" in colunas else 0)
     col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI Projecto") + 1 if "Dominio ENEI Projecto" in colunas else 0)
 
@@ -77,9 +31,8 @@ if uploaded_file:
     elif opcao_modo != "Todos":
         df = df.head(int(opcao_modo))
 
-    # Estimativa de tokens
     n_proj = len(df)
-    tokens_por_proj = 610  # aproximado
+    tokens_por_proj = 610
     total_tokens = n_proj * tokens_por_proj
     st.info(f"🧮 Estimativa: {total_tokens} tokens (aprox.) para {n_proj} projetos")
 
@@ -110,7 +63,6 @@ if uploaded_file:
         st.success("✅ Classificação concluída com sucesso!")
         st.dataframe(final_df)
 
-        # Guardar no session_state para uso posterior
         st.session_state["classificacoes_llm"] = final_df.copy()
 
         buffer = BytesIO()
