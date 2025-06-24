@@ -1,75 +1,113 @@
-if uploaded_file:
-    xls = pd.ExcelFile(uploaded_file)
+import streamlit as st
+import pandas as pd
+import openai
+import os
+from io import BytesIO
 
-    st.markdown("### 📄 Seleção das folhas (sheets)")
-    sheet_titulo = st.selectbox("📝 Escolhe a folha com os títulos:", xls.sheet_names, key="sheet_titulo")
-    sheet_resumo = st.selectbox("📋 Escolhe a folha com os resumos:", xls.sheet_names, key="sheet_resumo")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-    df_titulo = pd.read_excel(xls, sheet_name=sheet_titulo)
-    df_resumo = pd.read_excel(xls, sheet_name=sheet_resumo)
+def preparar_prompt(titulo, resumo, dominios):
+    prompt = f"""
+Classifica o projeto abaixo num dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente (ENEI 2020):
 
-    # Identificador comum
-    colunas_comuns = list(set(df_titulo.columns).intersection(set(df_resumo.columns)))
-    col_id = st.selectbox("🔗 Coluna para juntar as folhas (identificador comum):", colunas_comuns)
+{chr(10).join([f"- {d}" for d in dominios])}
 
-    df = pd.merge(df_titulo, df_resumo, on=col_id, how="inner")
+Projeto:
+Título: {titulo}
+Descrição: {resumo}
 
-    colunas = df.columns.tolist()
-    col_titulo = st.selectbox("📝 Coluna do título:", colunas, index=colunas.index("Designacao Projecto") if "Designacao Projecto" in colunas else 0)
-    col_resumo = st.selectbox("📋 Coluna da descrição/resumo:", colunas, index=colunas.index("Sumario Executivo") if "Sumario Executivo" in colunas else 0)
+Responde apenas com o nome exato do domínio mais adequado, sem explicações. Se não conseguires decidir com certeza, responde com "Indefinido".
+""".strip()
+    return prompt
 
-    col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI") + 1 if "Dominio ENEI" in colunas else 0)
-    col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI Projecto") + 1 if "Dominio ENEI Projecto" in colunas else 0)
+def carregar_dominios_2020():
+    df = pd.read_excel("descricao2020.xlsx", sheet_name=0)
+    df.dropna(subset=['Dominios'], inplace=True)
+    return df['Dominios'].unique().tolist()
 
-    dominios_enei = carregar_dominios_2020()
-
-    st.markdown("### ⚙️ Quantos projetos queres classificar?")
-    opcao_modo = st.radio("Modo:", ["Teste (1 projeto)", "5", "10", "20", "50", "Todos"])
-
-    if opcao_modo == "Teste (1 projeto)":
-        df = df.head(1)
-    elif opcao_modo != "Todos":
-        df = df.head(int(opcao_modo))
-
-    n_proj = len(df)
-    tokens_por_proj = 610
-    total_tokens = n_proj * tokens_por_proj
-    st.info(f"🧮 Estimativa: {total_tokens} tokens (aprox.) para {n_proj} projetos")
-
-    if st.button("🚀 Classificar com LLM"):
-        resultados = []
-        with st.spinner("A classificar projetos..."):
-            for _, row in df.iterrows():
-                titulo = str(row.get(col_titulo, ""))
-                resumo = str(row.get(col_resumo, ""))
-                prompt = preparar_prompt(titulo, resumo, dominios_enei)
-                classificacao = classificar_llm(prompt)
-
-                linha = {
-                    "NIPC": row.get("NIPC", ""),
-                    "Projeto": titulo,
-                    "Resumo": resumo,
-                    "Domínio LLM": classificacao
-                }
-
-                if col_manual1 != "Nenhuma":
-                    linha["Classificação Manual 1"] = row.get(col_manual1, "")
-                if col_manual2 != "Nenhuma":
-                    linha["Classificação Manual 2"] = row.get(col_manual2, "")
-
-                resultados.append(linha)
-
-        final_df = pd.DataFrame(resultados)
-        st.success("✅ Classificação concluída com sucesso!")
-        st.dataframe(final_df)
-
-        st.session_state["classificacoes_llm"] = final_df.copy()
-
-        buffer = BytesIO()
-        final_df.to_excel(buffer, index=False)
-        st.download_button(
-            label="📥 Download (.xlsx)",
-            data=buffer.getvalue(),
-            file_name="classificacao_llm_enei2020.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+def classificar_llm(prompt_texto):
+    try:
+        resposta = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt_texto}],
+            temperature=0
         )
+        return resposta.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Erro: {e}"
+
+# ------------------------------
+# Função principal (chamada no app.py)
+# ------------------------------
+def run_classificador_llm():
+    st.markdown("### 🧠 Classificação com LLM (OpenAI API)")
+    uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xlsx):", type=["xlsx"])
+
+    if uploaded_file:
+        xls = pd.ExcelFile(uploaded_file)
+        sheet = st.selectbox("📄 Escolhe a folha (sheet):", xls.sheet_names)
+        df = pd.read_excel(xls, sheet_name=sheet)
+
+        colunas = df.columns.tolist()
+        col_titulo = st.selectbox("📝 Coluna do título:", colunas, index=colunas.index("Designacao Projecto") if "Designacao Projecto" in colunas else 0)
+        col_resumo = st.selectbox("📋 Coluna da descrição/resumo:", colunas, index=colunas.index("Sumario Executivo") if "Sumario Executivo" in colunas else 0)
+
+        col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI") + 1 if "Dominio ENEI" in colunas else 0)
+        col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI Projecto") + 1 if "Dominio ENEI Projecto" in colunas else 0)
+
+        dominios_enei = carregar_dominios_2020()
+
+        st.markdown("### ⚙️ Quantos projetos queres classificar?")
+        opcao_modo = st.radio("Modo:", ["Teste (1 projeto)", "5", "10", "20", "50", "Todos"])
+
+        if opcao_modo == "Teste (1 projeto)":
+            df = df.head(1)
+        elif opcao_modo != "Todos":
+            df = df.head(int(opcao_modo))
+
+        n_proj = len(df)
+        tokens_por_proj = 610
+        total_tokens = n_proj * tokens_por_proj
+        st.info(f"🧮 Estimativa: {total_tokens} tokens (aprox.) para {n_proj} projetos")
+
+        if st.button("🚀 Classificar com LLM"):
+            resultados = []
+            with st.spinner("A classificar projetos..."):
+                for _, row in df.iterrows():
+                    titulo = str(row.get(col_titulo, ""))
+                    resumo = str(row.get(col_resumo, ""))
+                    prompt = preparar_prompt(titulo, resumo, dominios_enei)
+                    classificacao = classificar_llm(prompt)
+
+                    linha = {
+                        "NIPC": row.get("NIPC", ""),
+                        "Projeto": titulo,
+                        "Resumo": resumo,
+                        "Domínio LLM": classificacao
+                    }
+
+                    if col_manual1 != "Nenhuma":
+                        linha["Classificação Manual 1"] = row.get(col_manual1, "")
+                    if col_manual2 != "Nenhuma":
+                        linha["Classificação Manual 2"] = row.get(col_manual2, "")
+
+                    resultados.append(linha)
+
+            final_df = pd.DataFrame(resultados)
+            st.success("✅ Classificação concluída com sucesso!")
+            st.dataframe(final_df)
+
+            st.session_state["classificacoes_llm"] = final_df.copy()
+
+            buffer = BytesIO()
+            final_df.to_excel(buffer, index=False)
+            st.download_button(
+                label="📥 Download (.xlsx)",
+                data=buffer.getvalue(),
+                file_name="classificacao_llm_enei2020.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+# Só executa se este ficheiro for chamado diretamente (não no import)
+if __name__ == "__main__":
+    run_classificador_llm()
