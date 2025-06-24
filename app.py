@@ -3,13 +3,13 @@ import importlib.util
 import sys
 
 # Configurações iniciais da app
-st.set_page_config(page_title="Classificador de Projetos SIFIDE", layout="wide")
-st.title("📊 Classificador de Projetos para Domínios ENEI")
+st.set_page_config(page_title="Classificador de Projetos ENEI", layout="wide")
+st.title("🤖 Classificador Inteligente de Projetos ENEI")
 
 # Sidebar principal
 modo_app = st.sidebar.radio(
     "Seleciona o modo:",
-    ["🔍 Classificação", "📈 Métricas e Visualizações"]
+    ["🏠 Página Inicial", "🧠 Classificação com LLM", "📈 Métricas e Visualizações"]
 )
 
 # Função para carregar e executar um módulo externo
@@ -20,20 +20,24 @@ def carregar_modulo(nome_ficheiro, nome_modulo):
     spec.loader.exec_module(modulo)
     return modulo
 
-# Classificação
-if modo_app == "🔍 Classificação":
-    tipo_classificador = st.sidebar.selectbox(
-        "Escolhe o tipo de classificador:",
-        ["Classificação por Palavras-chave", "Classificação com LLM"]
-    )
+# Página Inicial
+if modo_app == "🏠 Página Inicial":
+    st.markdown("""
+    ## 👋 Bem-vindo ao Classificador de Projetos ENEI
+    Esta aplicação permite classificar automaticamente projetos de I&D nos domínios da Estratégia Nacional de Especialização Inteligente (ENEI 2020 e 2030), usando um modelo de linguagem avançado (LLM).
 
-    if tipo_classificador == "Classificação por Palavras-chave":
-        st.subheader("🔎 Modo por Palavras-chave")
-        carregar_modulo("Classifier.py", "classifier")
+    ### Funcionalidades:
+    - Classificação automática com LLM (GPT)
+    - Comparação com classificações manuais
+    - Visualização de métricas de desempenho
 
-    elif tipo_classificador == "Classificação com LLM":
-        st.subheader("🤖 Modo com Modelo de Linguagem (LLM)")
-        carregar_modulo("appclas.py", "appclas")
+    **Escolhe uma opção no menu lateral para começar.**
+    """)
+
+# Classificação com LLM
+elif modo_app == "🧠 Classificação com LLM":
+    st.subheader("🧠 Classificação Automática com Modelo de Linguagem (LLM)")
+    carregar_modulo("Classifier.py", "classifier")
 
 # Avaliação
 elif modo_app == "📈 Métricas e Visualizações":
