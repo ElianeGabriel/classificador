@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import openai
 import os
-import json
 from io import BytesIO
+import re
 
 # ------------------------------
 # API KEY (por variável de ambiente segura)
@@ -14,22 +14,16 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 # Preparar o prompt para o LLM
 # ------------------------------
 def preparar_prompt(titulo, resumo, dominios):
-    lista_dominios = "\n".join([f"- {d}" for d in dominios])
     prompt = f"""
-Classifica o projeto abaixo indicando os dois domínios mais prováveis da Estratégia Nacional de Especialização Inteligente ({st.session_state.get('versao_enei', 'ENEI')}), atribuindo uma percentagem estimada a cada um. A soma das percentagens deve ser 100%.
+Classifica o projeto abaixo num ou dois dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente ({st.session_state.get('versao_enei', 'ENEI')}):
 
-Escolhe de entre os seguintes domínios:
-{lista_dominios}
+{chr(10).join([f"- {d}" for d in dominios])}
 
 Projeto:
 Título: {titulo}
 Descrição: {resumo}
 
-Responde em formato JSON:
-[
-  {{"dominio": "nome do primeiro domínio", "percentagem": valor}},
-  {{"dominio": "nome do segundo domínio", "percentagem": valor}}
-]
+Responde com os dois domínios mais adequados por ordem de relevância, seguidos da percentagem estimada (ex: 1. Saúde (60%), 2. Energia (40%)). Se não conseguires decidir com certeza, responde apenas com "Indefinido".
 """.strip()
     return prompt
 
@@ -51,11 +45,26 @@ def classificar_llm(prompt_texto):
             messages=[{"role": "user", "content": prompt_texto}],
             temperature=0
         )
-        conteudo = resposta.choices[0].message.content.strip()
-        resultado = json.loads(conteudo)
-        return resultado
+        return resposta.choices[0].message.content.strip()
     except Exception as e:
         return f"Erro: {e}"
+
+# ------------------------------
+# Extrair domínios e percentagens da resposta
+# ------------------------------
+def extrair_dominios_e_percentagens(resposta):
+    if resposta.lower().strip() == "indefinido":
+        return ("Indefinido", "", "", "")
+
+    padrao = r"\d+\.\s*(.*?)\s*\((\d+)%\)"
+    correspondencias = re.findall(padrao, resposta)
+
+    if len(correspondencias) >= 2:
+        return correspondencias[0][0], correspondencias[0][1], correspondencias[1][0], correspondencias[1][1]
+    elif len(correspondencias) == 1:
+        return correspondencias[0][0], correspondencias[0][1], "", ""
+    else:
+        return resposta, "", "", ""
 
 # ------------------------------
 # INTERFACE
@@ -99,10 +108,11 @@ if uploaded_file:
 
     # Estimativa de tokens
     n_proj = len(df)
-    tokens_por_proj = 620
+    tokens_por_proj = 610
     total_tokens = n_proj * tokens_por_proj
     st.info(f"🧮 Estimativa: {total_tokens} tokens (aprox.) para {n_proj} projetos")
 
+    # Botão para classificar
     if st.button("🚀 Classificar com LLM"):
         resultados = []
         with st.spinner("A classificar projetos..."):
@@ -110,21 +120,18 @@ if uploaded_file:
                 titulo = str(row.get(col_titulo, ""))
                 resumo = str(row.get(col_resumo, ""))
                 prompt = preparar_prompt(titulo, resumo, dominios)
-                classificacao = classificar_llm(prompt)
+                resposta = classificar_llm(prompt)
+                d1, p1, d2, p2 = extrair_dominios_e_percentagens(resposta)
 
                 linha = {
                     "NIPC": row.get("NIPC", ""),
                     "Projeto": titulo,
-                    "Resumo": resumo
+                    "Resumo": resumo,
+                    "Domínio LLM 1": d1,
+                    "% 1": p1,
+                    "Domínio LLM 2": d2,
+                    "% 2": p2
                 }
-
-                if isinstance(classificacao, list) and len(classificacao) >= 2:
-                    linha["Domínio LLM 1"] = classificacao[0].get("dominio", "")
-                    linha["% 1"] = classificacao[0].get("percentagem", "")
-                    linha["Domínio LLM 2"] = classificacao[1].get("dominio", "")
-                    linha["% 2"] = classificacao[1].get("percentagem", "")
-                else:
-                    linha["Domínio LLM 1"] = "Erro"
 
                 if col_manual1 != "Nenhuma":
                     linha["Classificação Manual 1"] = row.get(col_manual1, "")
@@ -135,17 +142,16 @@ if uploaded_file:
 
         final_df = pd.DataFrame(resultados)
         final_df.index += 1
+        st.session_state["classificacoes_llm"] = final_df
 
+    # Mostrar resultados
+    if "classificacoes_llm" in st.session_state:
         st.success("✅ Classificação concluída com sucesso!")
         st.markdown("### 🔎 Resultados")
-        st.dataframe(final_df, use_container_width=True)
+        st.dataframe(st.session_state["classificacoes_llm"], use_container_width=True)
 
-        # Guardar no session_state (permanece visível após o download)
-        st.session_state["classificacoes_llm"] = final_df.copy()
-
-        # Exportar para Excel
         buffer = BytesIO()
-        final_df.to_excel(buffer, index=False)
+        st.session_state["classificacoes_llm"].to_excel(buffer, index=False)
         st.download_button(
             label="📥 Download (.xlsx)",
             data=buffer.getvalue(),
