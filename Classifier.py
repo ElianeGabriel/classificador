@@ -14,7 +14,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 # ------------------------------
 def preparar_prompt(titulo, resumo, dominios):
     prompt = f"""
-Classifica o projeto abaixo num dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente (ENEI 2020):
+Classifica o projeto abaixo num dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente ({st.session_state.get('versao_enei', 'ENEI')}):
 
 {chr(10).join([f"- {d}" for d in dominios])}
 
@@ -27,10 +27,10 @@ Responde apenas com o nome exato do domínio mais adequado, sem explicações. S
     return prompt
 
 # ------------------------------
-# Carregar os domínios da ENEI 2020
+# Carregar domínios da ENEI
 # ------------------------------
-def carregar_dominios_2020():
-    df = pd.read_excel("descricao2020.xlsx", sheet_name=0)
+def carregar_dominios(ficheiro, sheet):
+    df = pd.read_excel(ficheiro, sheet_name=sheet)
     df.dropna(subset=['Dominios'], inplace=True)
     return df['Dominios'].unique().tolist()
 
@@ -52,6 +52,17 @@ def classificar_llm(prompt_texto):
 # INTERFACE
 # ------------------------------
 st.markdown("### 🧠 Classificação com LLM (OpenAI API)")
+
+# Escolher versão ENEI
+versao_enei = st.sidebar.radio("Seleciona a versão da ENEI:", ["ENEI 2020", "ENEI 2030"])
+st.session_state["versao_enei"] = versao_enei
+
+config_enei = {
+    "ENEI 2020": {"ficheiro": "descricao2020.xlsx", "sheet": "Eixos"},
+    "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios"}
+}
+
+# Upload do ficheiro com projetos reais
 uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xlsx):", type=["xlsx"])
 
 if uploaded_file:
@@ -63,11 +74,11 @@ if uploaded_file:
     col_titulo = st.selectbox("📝 Coluna do título:", colunas, index=colunas.index("Designacao Projecto") if "Designacao Projecto" in colunas else 0)
     col_resumo = st.selectbox("📋 Coluna da descrição/resumo:", colunas, index=colunas.index("Sumario Executivo") if "Sumario Executivo" in colunas else 0)
 
-    # Classificações manuais (se existirem)
+    # Classificações manuais (opcional)
     col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI") + 1 if "Dominio ENEI" in colunas else 0)
     col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI Projecto") + 1 if "Dominio ENEI Projecto" in colunas else 0)
 
-    dominios_enei = carregar_dominios_2020()
+    dominios = carregar_dominios(config_enei[versao_enei]["ficheiro"], config_enei[versao_enei]["sheet"])
 
     st.markdown("### ⚙️ Quantos projetos queres classificar?")
     opcao_modo = st.radio("Modo:", ["Teste (1 projeto)", "5", "10", "20", "50", "Todos"])
@@ -79,7 +90,7 @@ if uploaded_file:
 
     # Estimativa de tokens
     n_proj = len(df)
-    tokens_por_proj = 610  # aproximado
+    tokens_por_proj = 610
     total_tokens = n_proj * tokens_por_proj
     st.info(f"🧮 Estimativa: {total_tokens} tokens (aprox.) para {n_proj} projetos")
 
@@ -89,7 +100,7 @@ if uploaded_file:
             for _, row in df.iterrows():
                 titulo = str(row.get(col_titulo, ""))
                 resumo = str(row.get(col_resumo, ""))
-                prompt = preparar_prompt(titulo, resumo, dominios_enei)
+                prompt = preparar_prompt(titulo, resumo, dominios)
                 classificacao = classificar_llm(prompt)
 
                 linha = {
@@ -110,7 +121,6 @@ if uploaded_file:
         st.success("✅ Classificação concluída com sucesso!")
         st.dataframe(final_df)
 
-        # Guardar no session_state para uso posterior
         st.session_state["classificacoes_llm"] = final_df.copy()
 
         buffer = BytesIO()
@@ -118,6 +128,6 @@ if uploaded_file:
         st.download_button(
             label="📥 Download (.xlsx)",
             data=buffer.getvalue(),
-            file_name="classificacao_llm_enei2020.xlsx",
+            file_name=f"classificacao_llm_{versao_enei.replace(' ', '').lower()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
