@@ -1,160 +1,39 @@
 import streamlit as st
-import pandas as pd
-import openai
-import os
-from io import BytesIO
-import re
 
-# ------------------------------
-# API KEY (por variável de ambiente segura)
-# ------------------------------
-openai.api_key = os.getenv("OPENAI_API_KEY")
+st.markdown("# 🏠 Bem-vindo ao Classificador de Projetos ENEI")
+st.markdown("""
+Este sistema permite classificar automaticamente projetos de I&D&I segundo os domínios prioritários da Estratégia Nacional de Especialização Inteligente (ENEI), nas versões **2020** ou **2030**.
 
-# ------------------------------
-# Preparar o prompt para o LLM
-# ------------------------------
-def preparar_prompt(titulo, resumo, dominios):
-    prompt = f"""
-Classifica o projeto abaixo num ou dois dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente ({st.session_state.get('versao_enei', 'ENEI')}):
+---
 
-{chr(10).join([f"- {d}" for d in dominios])}
+## 🚀 Funcionalidades disponíveis
 
-Projeto:
-Título: {titulo}
-Descrição: {resumo}
+### 🧠 Classificação com LLM
+Utiliza modelos da OpenAI (como o GPT-4o) para classificar projetos com base no título e resumo, identificando os **dois domínios mais prováveis**, com percentagens estimadas. Suporta:
+- Classificação por **ENEI 2020** ou **ENEI 2030**
+- Ficheiros com múltiplas sheets e colunas flexíveis
+- Comparação com classificações manuais (opcional)
 
-Responde com os dois domínios mais adequados por ordem de relevância, seguidos da percentagem estimada (ex: 1. Saúde (60%), 2. Energia (40%)). Se não conseguires decidir com certeza, responde apenas com "Indefinido".
-""".strip()
-    return prompt
+### 📈 Métricas e Visualizações
+Compara os resultados da classificação automática com as classificações manuais. Gera:
+- **Relatório de desempenho** (precisão, recall, f1-score)
+- **Matriz de confusão**
+- **Gráficos interativos**
+- **Download do relatório** em Excel
 
-# ------------------------------
-# Carregar domínios da ENEI
-# ------------------------------
-def carregar_dominios(ficheiro, sheet):
-    df = pd.read_excel(ficheiro, sheet_name=sheet)
-    df.dropna(subset=['Dominios'], inplace=True)
-    return df['Dominios'].unique().tolist()
+---
 
-# ------------------------------
-# Função para classificar com OpenAI LLM
-# ------------------------------
-def classificar_llm(prompt_texto):
-    try:
-        resposta = openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt_texto}],
-            temperature=0
-        )
-        return resposta.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Erro: {e}"
+## 📄 Como usar
 
-# ------------------------------
-# Extrair domínios e percentagens da resposta
-# ------------------------------
-def extrair_dominios_e_percentagens(resposta):
-    if resposta.lower().strip() == "indefinido":
-        return ("Indefinido", "", "", "")
+1. Acede ao menu lateral e seleciona **"🧠 Classificação com LLM"**
+2. Faz upload de um ficheiro `.xlsx` com os projetos reais
+3. Define as colunas de título e resumo (e as classificações manuais, se existirem)
+4. Classifica e analisa os resultados
+5. Acede à secção **📈 Métricas e Visualizações** para avaliar o desempenho
 
-    padrao = r"\d+\.\s*(.*?)\s*\((\d+)%\)"
-    correspondencias = re.findall(padrao, resposta)
+---
 
-    if len(correspondencias) >= 2:
-        return correspondencias[0][0], correspondencias[0][1], correspondencias[1][0], correspondencias[1][1]
-    elif len(correspondencias) == 1:
-        return correspondencias[0][0], correspondencias[0][1], "", ""
-    else:
-        return resposta, "", "", ""
+## ℹ️ Sobre este projeto
+Desenvolvido para apoiar a ANI (Agência Nacional de Inovação) na avaliação automática de projetos, este sistema combina a **potência dos modelos de linguagem** com a **estrutura da política pública de inovação** em Portugal.
 
-# ------------------------------
-# INTERFACE
-# ------------------------------
-st.markdown("### 🧠 Classificação com LLM (OpenAI API)")
-
-# Escolher versão ENEI
-versao_enei = st.sidebar.radio("Seleciona a versão da ENEI:", ["ENEI 2020", "ENEI 2030"])
-st.session_state["versao_enei"] = versao_enei
-
-config_enei = {
-    "ENEI 2020": {"ficheiro": "descricao2020.xlsx", "sheet": "Eixos"},
-    "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios"}
-}
-
-# Upload do ficheiro com projetos reais
-uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xlsx):", type=["xlsx"])
-
-if uploaded_file:
-    xls = pd.ExcelFile(uploaded_file)
-    sheet = st.selectbox("📄 Escolhe a folha (sheet):", xls.sheet_names)
-    df = pd.read_excel(xls, sheet_name=sheet)
-
-    colunas = df.columns.tolist()
-    col_titulo = st.selectbox("📝 Coluna do título:", colunas, index=colunas.index("Designacao Projecto") if "Designacao Projecto" in colunas else 0)
-    col_resumo = st.selectbox("📋 Coluna da descrição/resumo:", colunas, index=colunas.index("Sumario Executivo") if "Sumario Executivo" in colunas else 0)
-
-    # Classificações manuais (opcional)
-    col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI") + 1 if "Dominio ENEI" in colunas else 0)
-    col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI Projecto") + 1 if "Dominio ENEI Projecto" in colunas else 0)
-
-    dominios = carregar_dominios(config_enei[versao_enei]["ficheiro"], config_enei[versao_enei]["sheet"])
-
-    st.markdown("### ⚙️ Quantos projetos queres classificar?")
-    opcao_modo = st.radio("Modo:", ["Teste (1 projeto)", "5", "10", "20", "50", "Todos"])
-
-    if opcao_modo == "Teste (1 projeto)":
-        df = df.head(1)
-    elif opcao_modo != "Todos":
-        df = df.head(int(opcao_modo))
-
-    # Estimativa de tokens
-    n_proj = len(df)
-    tokens_por_proj = 610
-    total_tokens = n_proj * tokens_por_proj
-    st.info(f"🧮 Estimativa: {total_tokens} tokens (aprox.) para {n_proj} projetos")
-
-    # Botão para classificar
-    if st.button("🚀 Classificar com LLM"):
-        resultados = []
-        with st.spinner("A classificar projetos..."):
-            for _, row in df.iterrows():
-                titulo = str(row.get(col_titulo, ""))
-                resumo = str(row.get(col_resumo, ""))
-                prompt = preparar_prompt(titulo, resumo, dominios)
-                resposta = classificar_llm(prompt)
-                d1, p1, d2, p2 = extrair_dominios_e_percentagens(resposta)
-
-                linha = {
-                    "NIPC": row.get("NIPC", ""),
-                    "Projeto": titulo,
-                    "Resumo": resumo,
-                    "Domínio LLM 1": d1,
-                    "% 1": p1,
-                    "Domínio LLM 2": d2,
-                    "% 2": p2
-                }
-
-                if col_manual1 != "Nenhuma":
-                    linha["Classificação Manual 1"] = row.get(col_manual1, "")
-                if col_manual2 != "Nenhuma":
-                    linha["Classificação Manual 2"] = row.get(col_manual2, "")
-
-                resultados.append(linha)
-
-        final_df = pd.DataFrame(resultados)
-        final_df.index += 1
-        st.session_state["classificacoes_llm"] = final_df
-
-    # Mostrar resultados
-    if "classificacoes_llm" in st.session_state:
-        st.success("✅ Classificação concluída com sucesso!")
-        st.markdown("### 🔎 Resultados")
-        st.dataframe(st.session_state["classificacoes_llm"], use_container_width=True)
-
-        buffer = BytesIO()
-        st.session_state["classificacoes_llm"].to_excel(buffer, index=False)
-        st.download_button(
-            label="📥 Download (.xlsx)",
-            data=buffer.getvalue(),
-            file_name=f"classificacao_llm_{versao_enei.replace(' ', '').lower()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+""")
