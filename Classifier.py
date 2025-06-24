@@ -118,11 +118,16 @@ if uploaded_file:
                 resultados.append(linha)
 
         final_df = pd.DataFrame(resultados)
+        final_df.index += 1
+
         st.success("✅ Classificação concluída com sucesso!")
-        st.dataframe(final_df)
-
+        st.markdown("### 🔎 Resultados")
+        st.dataframe(final_df, use_container_width=True)
+        
+        # Guardar no session_state (permanece visível após o download)
         st.session_state["classificacoes_llm"] = final_df.copy()
-
+        
+        # Exportar para Excel
         buffer = BytesIO()
         final_df.to_excel(buffer, index=False)
         st.download_button(
