@@ -94,6 +94,7 @@ if uploaded_file:
     total_tokens = n_proj * tokens_por_proj
     st.info(f"🧮 Estimativa: {total_tokens} tokens (aprox.) para {n_proj} projetos")
 
+    # Botão para classificar
     if st.button("🚀 Classificar com LLM"):
         resultados = []
         with st.spinner("A classificar projetos..."):
@@ -102,34 +103,33 @@ if uploaded_file:
                 resumo = str(row.get(col_resumo, ""))
                 prompt = preparar_prompt(titulo, resumo, dominios)
                 classificacao = classificar_llm(prompt)
-
+    
                 linha = {
                     "NIPC": row.get("NIPC", ""),
                     "Projeto": titulo,
                     "Resumo": resumo,
                     "Domínio LLM": classificacao
                 }
-
+    
                 if col_manual1 != "Nenhuma":
                     linha["Classificação Manual 1"] = row.get(col_manual1, "")
                 if col_manual2 != "Nenhuma":
                     linha["Classificação Manual 2"] = row.get(col_manual2, "")
-
+    
                 resultados.append(linha)
-
+    
         final_df = pd.DataFrame(resultados)
         final_df.index += 1
-
+        st.session_state["classificacoes_llm"] = final_df  # guarda no estado para reutilizar depois
+    
+    # Mostrar os resultados se já houver no session_state
+    if "classificacoes_llm" in st.session_state:
         st.success("✅ Classificação concluída com sucesso!")
         st.markdown("### 🔎 Resultados")
-        st.dataframe(final_df, use_container_width=True)
-        
-        # Guardar no session_state (permanece visível após o download)
-        st.session_state["classificacoes_llm"] = final_df.copy()
-        
-        # Exportar para Excel
+        st.dataframe(st.session_state["classificacoes_llm"], use_container_width=True)
+    
         buffer = BytesIO()
-        final_df.to_excel(buffer, index=False)
+        st.session_state["classificacoes_llm"].to_excel(buffer, index=False)
         st.download_button(
             label="📥 Download (.xlsx)",
             data=buffer.getvalue(),
