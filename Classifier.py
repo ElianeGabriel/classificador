@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import openai
@@ -8,8 +9,9 @@ import re
 # API Key
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Prompt para o LLM
-def preparar_prompt(titulo, resumo, dominios):
+# Prompt com CAE (opcional)
+def preparar_prompt(titulo, resumo, dominios, cae=None):
+    bloco_cae = f"CAE do projeto: {cae}" if cae else ""
     prompt = f"""
 Classifica o projeto abaixo num ou dois dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente ({st.session_state.get('versao_enei', 'ENEI')}):
 
@@ -18,6 +20,7 @@ Classifica o projeto abaixo num ou dois dos seguintes domínios prioritários da
 Projeto:
 Título: {titulo}
 Descrição: {resumo}
+{bloco_cae}
 
 Responde com os dois domínios mais adequados por ordem de relevância, seguidos da percentagem estimada (ex: 1. Saúde (60%), 2. Energia (40%)). Se não conseguires decidir com certeza, responde apenas com "Indefinido".
 """.strip()
@@ -45,10 +48,8 @@ def classificar_llm(prompt_texto):
 def extrair_dominios_e_percentagens(resposta):
     if resposta.lower().strip() == "indefinido":
         return ("Indefinido", "", "", "")
-
     padrao = r"\d+\.\s*(.*?)\s*\((\d+)%\)"
     correspondencias = re.findall(padrao, resposta)
-
     if len(correspondencias) >= 2:
         return correspondencias[0][0], correspondencias[0][1], correspondencias[1][0], correspondencias[1][1]
     elif len(correspondencias) == 1:
@@ -77,6 +78,7 @@ if uploaded_file:
     colunas = df.columns.tolist()
     col_titulo = st.selectbox("📝 Coluna do título:", colunas)
     col_resumo = st.selectbox("📋 Coluna do resumo:", colunas)
+    col_cae = st.selectbox("🏷️ Coluna da CAE (opcional):", ["Nenhuma"] + colunas)
     col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas)
     col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas)
 
@@ -86,10 +88,7 @@ if uploaded_file:
 
     if modo_classificacao == "Classificação normal":
         quantidade = st.radio("Quantos projetos queres classificar?", ["1", "5", "10", "20", "50", "Todos"])
-        if quantidade == "Todos":
-            df_filtrado = df
-        else:
-            df_filtrado = df.head(int(quantidade))
+        df_filtrado = df if quantidade == "Todos" else df.head(int(quantidade))
     else:
         coluna_grupo = st.selectbox("📂 Coluna para agrupar (ex: domínio manual):", colunas)
         n_grupo = st.selectbox("📌 Nº de projetos por grupo:", [3, 5, 10])
@@ -103,7 +102,8 @@ if uploaded_file:
             for _, row in df_filtrado.iterrows():
                 titulo = str(row.get(col_titulo, ""))
                 resumo = str(row.get(col_resumo, ""))
-                prompt = preparar_prompt(titulo, resumo, dominios)
+                cae_valor = str(row.get(col_cae)) if col_cae != "Nenhuma" else None
+                prompt = preparar_prompt(titulo, resumo, dominios, cae=cae_valor)
                 resposta = classificar_llm(prompt)
                 d1, p1, d2, p2 = extrair_dominios_e_percentagens(resposta)
 
@@ -121,6 +121,8 @@ if uploaded_file:
                     linha["Classificação Manual 1"] = row.get(col_manual1, "")
                 if col_manual2 != "Nenhuma":
                     linha["Classificação Manual 2"] = row.get(col_manual2, "")
+                if col_cae != "Nenhuma":
+                    linha["CAE"] = cae_valor
 
                 resultados.append(linha)
 
