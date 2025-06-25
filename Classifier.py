@@ -5,14 +5,10 @@ import os
 from io import BytesIO
 import re
 
-# ------------------------------
-# API KEY (por variável de ambiente segura)
-# ------------------------------
+# API Key
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# ------------------------------
-# Preparar o prompt para o LLM
-# ------------------------------
+# Prompt para o LLM
 def preparar_prompt(titulo, resumo, dominios):
     prompt = f"""
 Classifica o projeto abaixo num ou dois dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente ({st.session_state.get('versao_enei', 'ENEI')}):
@@ -23,21 +19,17 @@ Projeto:
 Título: {titulo}
 Descrição: {resumo}
 
-Responde com os dois domínios mais adequados por ordem de relevância, seguidos da percentagem estimada (ex: 1. Saúde (60%), 2. Energia (40%)). Se não conseguires decidir com certeza, responde apenas com \"Indefinido\".
+Responde com os dois domínios mais adequados por ordem de relevância, seguidos da percentagem estimada (ex: 1. Saúde (60%), 2. Energia (40%)). Se não conseguires decidir com certeza, responde apenas com "Indefinido".
 """.strip()
     return prompt
 
-# ------------------------------
-# Carregar domínios da ENEI
-# ------------------------------
+# Carregar domínios
 def carregar_dominios(ficheiro, sheet):
     df = pd.read_excel(ficheiro, sheet_name=sheet)
     df.dropna(subset=['Dominios'], inplace=True)
     return df['Dominios'].unique().tolist()
 
-# ------------------------------
-# Função para classificar com OpenAI LLM
-# ------------------------------
+# Chamada ao LLM
 def classificar_llm(prompt_texto):
     try:
         resposta = openai.chat.completions.create(
@@ -49,9 +41,7 @@ def classificar_llm(prompt_texto):
     except Exception as e:
         return f"Erro: {e}"
 
-# ------------------------------
-# Extrair domínios e percentagens da resposta
-# ------------------------------
+# Extrair domínios e percentagens
 def extrair_dominios_e_percentagens(resposta):
     if resposta.lower().strip() == "indefinido":
         return ("Indefinido", "", "", "")
@@ -66,9 +56,9 @@ def extrair_dominios_e_percentagens(resposta):
     else:
         return resposta, "", "", ""
 
-# ------------------------------
 # INTERFACE
-# ------------------------------
+st.markdown("### 🤖 Classificador Automático com LLM (OpenAI)")
+
 versao_enei = st.sidebar.radio("Seleciona a versão da ENEI:", ["ENEI 2020", "ENEI 2030"])
 st.session_state["versao_enei"] = versao_enei
 
@@ -85,37 +75,32 @@ if uploaded_file:
     df = pd.read_excel(xls, sheet_name=sheet)
 
     colunas = df.columns.tolist()
-    col_titulo = st.selectbox("📝 Coluna do título:", colunas, index=colunas.index("Designacao Projecto") if "Designacao Projecto" in colunas else 0)
-    col_resumo = st.selectbox("📋 Coluna da descrição/resumo:", colunas, index=colunas.index("Sumario Executivo") if "Sumario Executivo" in colunas else 0)
-
-    col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI") + 1 if "Dominio ENEI" in colunas else 0)
-    col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI Projecto") + 1 if "Dominio ENEI Projecto" in colunas else 0)
-
-    coluna_referencia = st.selectbox("🎯 Coluna para seleção por grupo:", colunas)
-    n_por_grupo = st.selectbox("📊 Número de projetos por grupo distinto:", ["Todos", 3, 5, 10])
-
-    if n_por_grupo != "Todos":
-        df = df.groupby(df[coluna_referencia]).head(int(n_por_grupo)).reset_index(drop=True)
+    col_titulo = st.selectbox("📝 Coluna do título:", colunas)
+    col_resumo = st.selectbox("📋 Coluna do resumo:", colunas)
+    col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas)
+    col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas)
 
     dominios = carregar_dominios(config_enei[versao_enei]["ficheiro"], config_enei[versao_enei]["sheet"])
 
-    st.markdown("### ⚙️ Quantos projetos queres classificar?")
-    opcao_modo = st.radio("Modo:", ["Teste (1 projeto)", "5", "10", "20", "50", "Todos"])
+    modo_classificacao = st.radio("Modo de classificação:", ["Classificação normal", "Classificação por grupo (ex: por domínio manual)"])
 
-    if opcao_modo == "Teste (1 projeto)":
-        df = df.head(1)
-    elif opcao_modo != "Todos":
-        df = df.head(int(opcao_modo))
+    if modo_classificacao == "Classificação normal":
+        quantidade = st.radio("Quantos projetos queres classificar?", ["1", "5", "10", "20", "50", "Todos"])
+        if quantidade == "Todos":
+            df_filtrado = df
+        else:
+            df_filtrado = df.head(int(quantidade))
+    else:
+        coluna_grupo = st.selectbox("📂 Coluna para agrupar (ex: domínio manual):", colunas)
+        n_grupo = st.selectbox("📌 Nº de projetos por grupo:", [3, 5, 10])
+        df_filtrado = df.groupby(df[coluna_grupo]).head(n_grupo)
 
-    n_proj = len(df)
-    tokens_por_proj = 610
-    total_tokens = n_proj * tokens_por_proj
-    st.info(f"🧮 Estimativa: {total_tokens} tokens (aprox.) para {n_proj} projetos")
+    st.info(f"🧮 Estimativa: {len(df_filtrado) * 610} tokens (aprox.)")
 
     if st.button("🚀 Classificar com LLM"):
         resultados = []
         with st.spinner("A classificar projetos..."):
-            for _, row in df.iterrows():
+            for _, row in df_filtrado.iterrows():
                 titulo = str(row.get(col_titulo, ""))
                 resumo = str(row.get(col_resumo, ""))
                 prompt = preparar_prompt(titulo, resumo, dominios)
@@ -143,16 +128,16 @@ if uploaded_file:
         final_df.index += 1
         st.session_state["classificacoes_llm"] = final_df
 
-    if "classificacoes_llm" in st.session_state:
-        st.success("✅ Classificação concluída com sucesso!")
-        st.markdown("### 🔎 Resultados")
-        st.dataframe(st.session_state["classificacoes_llm"], use_container_width=True)
+if "classificacoes_llm" in st.session_state:
+    st.success("✅ Classificação concluída com sucesso!")
+    st.markdown("### 🔎 Resultados")
+    st.dataframe(st.session_state["classificacoes_llm"], use_container_width=True)
 
-        buffer = BytesIO()
-        st.session_state["classificacoes_llm"].to_excel(buffer, index=False)
-        st.download_button(
-            label="📥 Download (.xlsx)",
-            data=buffer.getvalue(),
-            file_name=f"classificacao_llm_{versao_enei.replace(' ', '').lower()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    buffer = BytesIO()
+    st.session_state["classificacoes_llm"].to_excel(buffer, index=False)
+    st.download_button(
+        label="📥 Download (.xlsx)",
+        data=buffer.getvalue(),
+        file_name=f"classificacao_llm_{versao_enei.replace(' ', '').lower()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
