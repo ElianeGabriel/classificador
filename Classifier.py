@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import openai
@@ -6,12 +5,15 @@ import os
 from io import BytesIO
 import re
 
-# API Key
+# ------------------------------
+# API KEY (por variável de ambiente segura)
+# ------------------------------
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Prompt com CAE (opcional)
-def preparar_prompt(titulo, resumo, dominios, cae=None):
-    bloco_cae = f"CAE do projeto: {cae}" if cae else ""
+# ------------------------------
+# Preparar o prompt para o LLM
+# ------------------------------
+def preparar_prompt(titulo, resumo, dominios):
     prompt = f"""
 Classifica o projeto abaixo num ou dois dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente ({st.session_state.get('versao_enei', 'ENEI')}):
 
@@ -20,19 +22,35 @@ Classifica o projeto abaixo num ou dois dos seguintes domínios prioritários da
 Projeto:
 Título: {titulo}
 Descrição: {resumo}
-{bloco_cae}
 
 Responde com os dois domínios mais adequados por ordem de relevância, seguidos da percentagem estimada (ex: 1. Saúde (60%), 2. Energia (40%)). Se não conseguires decidir com certeza, responde apenas com "Indefinido".
 """.strip()
     return prompt
 
-# Carregar domínios
+# ------------------------------
+# Carregar domínios com descrição e área
+# ------------------------------
 def carregar_dominios(ficheiro, sheet):
     df = pd.read_excel(ficheiro, sheet_name=sheet)
     df.dropna(subset=['Dominios'], inplace=True)
-    return df['Dominios'].unique().tolist()
 
-# Chamada ao LLM
+    dominios = []
+    for _, row in df.iterrows():
+        nome = str(row['Dominios']).strip()
+        descricao = str(row.get('Descrição', '')).strip()
+        area = str(row.get('Principal área de atuação (Opções de Resposta)', '')).strip()
+
+        texto_completo = f"{nome}. {descricao}"
+        if area:
+            texto_completo += f" ({area})"
+
+        dominios.append(texto_completo)
+    
+    return dominios
+
+# ------------------------------
+# Função para classificar com OpenAI LLM
+# ------------------------------
 def classificar_llm(prompt_texto):
     try:
         resposta = openai.chat.completions.create(
@@ -44,7 +62,9 @@ def classificar_llm(prompt_texto):
     except Exception as e:
         return f"Erro: {e}"
 
-# Extrair domínios e percentagens
+# ------------------------------
+# Extrair domínios e percentagens da resposta
+# ------------------------------
 def extrair_dominios_e_percentagens(resposta):
     if resposta.lower().strip() == "indefinido":
         return ("Indefinido", "", "", "")
@@ -57,7 +77,9 @@ def extrair_dominios_e_percentagens(resposta):
     else:
         return resposta, "", "", ""
 
+# ------------------------------
 # INTERFACE
+# ------------------------------
 st.markdown("### 🤖 Classificador Automático com LLM (OpenAI)")
 
 versao_enei = st.sidebar.radio("Seleciona a versão da ENEI:", ["ENEI 2020", "ENEI 2030"])
@@ -78,7 +100,6 @@ if uploaded_file:
     colunas = df.columns.tolist()
     col_titulo = st.selectbox("📝 Coluna do título:", colunas)
     col_resumo = st.selectbox("📋 Coluna do resumo:", colunas)
-    col_cae = st.selectbox("🏷️ Coluna da CAE (opcional):", ["Nenhuma"] + colunas)
     col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas)
     col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas)
 
@@ -102,8 +123,7 @@ if uploaded_file:
             for _, row in df_filtrado.iterrows():
                 titulo = str(row.get(col_titulo, ""))
                 resumo = str(row.get(col_resumo, ""))
-                cae_valor = str(row.get(col_cae)) if col_cae != "Nenhuma" else None
-                prompt = preparar_prompt(titulo, resumo, dominios, cae=cae_valor)
+                prompt = preparar_prompt(titulo, resumo, dominios)
                 resposta = classificar_llm(prompt)
                 d1, p1, d2, p2 = extrair_dominios_e_percentagens(resposta)
 
@@ -121,8 +141,6 @@ if uploaded_file:
                     linha["Classificação Manual 1"] = row.get(col_manual1, "")
                 if col_manual2 != "Nenhuma":
                     linha["Classificação Manual 2"] = row.get(col_manual2, "")
-                if col_cae != "Nenhuma":
-                    linha["CAE"] = cae_valor
 
                 resultados.append(linha)
 
