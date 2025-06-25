@@ -23,7 +23,7 @@ Projeto:
 Título: {titulo}
 Descrição: {resumo}
 
-Responde com os dois domínios mais adequados por ordem de relevância, seguidos da percentagem estimada (ex: 1. Saúde (60%), 2. Energia (40%)). Se não conseguires decidir com certeza, responde apenas com "Indefinido".
+Responde com os dois domínios mais adequados por ordem de relevância, seguidos da percentagem estimada (ex: 1. Saúde (60%), 2. Energia (40%)). Se não conseguires decidir com certeza, responde apenas com \"Indefinido\".
 """.strip()
     return prompt
 
@@ -69,9 +69,6 @@ def extrair_dominios_e_percentagens(resposta):
 # ------------------------------
 # INTERFACE
 # ------------------------------
-#st.markdown("### OpenAI GPT4o)")
-
-# Escolher versão ENEI
 versao_enei = st.sidebar.radio("Seleciona a versão da ENEI:", ["ENEI 2020", "ENEI 2030"])
 st.session_state["versao_enei"] = versao_enei
 
@@ -80,7 +77,6 @@ config_enei = {
     "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios"}
 }
 
-# Upload do ficheiro com projetos reais
 uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xlsx):", type=["xlsx"])
 
 if uploaded_file:
@@ -92,9 +88,14 @@ if uploaded_file:
     col_titulo = st.selectbox("📝 Coluna do título:", colunas, index=colunas.index("Designacao Projecto") if "Designacao Projecto" in colunas else 0)
     col_resumo = st.selectbox("📋 Coluna da descrição/resumo:", colunas, index=colunas.index("Sumario Executivo") if "Sumario Executivo" in colunas else 0)
 
-    # Classificações manuais (opcional)
     col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI") + 1 if "Dominio ENEI" in colunas else 0)
     col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas, index=colunas.index("Dominio ENEI Projecto") + 1 if "Dominio ENEI Projecto" in colunas else 0)
+
+    coluna_referencia = st.selectbox("🎯 Coluna para seleção por grupo:", colunas)
+    n_por_grupo = st.selectbox("📊 Número de projetos por grupo distinto:", ["Todos", 3, 5, 10])
+
+    if n_por_grupo != "Todos":
+        df = df.groupby(df[coluna_referencia]).head(int(n_por_grupo)).reset_index(drop=True)
 
     dominios = carregar_dominios(config_enei[versao_enei]["ficheiro"], config_enei[versao_enei]["sheet"])
 
@@ -106,13 +107,11 @@ if uploaded_file:
     elif opcao_modo != "Todos":
         df = df.head(int(opcao_modo))
 
-    # Estimativa de tokens
     n_proj = len(df)
     tokens_por_proj = 610
     total_tokens = n_proj * tokens_por_proj
     st.info(f"🧮 Estimativa: {total_tokens} tokens (aprox.) para {n_proj} projetos")
 
-    # Botão para classificar
     if st.button("🚀 Classificar com LLM"):
         resultados = []
         with st.spinner("A classificar projetos..."):
@@ -144,7 +143,6 @@ if uploaded_file:
         final_df.index += 1
         st.session_state["classificacoes_llm"] = final_df
 
-    # Mostrar resultados
     if "classificacoes_llm" in st.session_state:
         st.success("✅ Classificação concluída com sucesso!")
         st.markdown("### 🔎 Resultados")
