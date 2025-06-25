@@ -112,8 +112,8 @@ if uploaded_file:
         df_filtrado = df if quantidade == "Todos" else df.head(int(quantidade))
     else:
         coluna_grupo = st.selectbox("📂 Coluna para agrupar (ex: domínio manual):", colunas)
-        n_grupo = st.selectbox("📌 Nº de projetos por grupo:", [3, 5, 10])
-        df_filtrado = df.groupby(df[coluna_grupo]).head(n_grupo)
+        n_grupo = st.selectbox("📌 Nº de projetos por grupo:", [1, 2, 3, 5, 10])
+        df_filtrado = df.groupby(df[coluna_grupo], group_keys=False).apply(lambda x: x.sample(n=min(n_grupo, len(x)), random_state=42))
 
     st.info(f"🧮 Estimativa: {len(df_filtrado) * 610} tokens (aprox.)")
 
