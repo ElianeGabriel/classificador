@@ -47,8 +47,8 @@ def carregar_dominios(ficheiro, sheet):
         dominios.append(texto_completo)
         
     # Mostrar os domínios carregados no Streamlit
-    st.write("🧾 Domínios carregados:", dominios)
-    st.write(f"Total de domínios carregados: {len(dominios)}")    
+    #st.write("🧾 Domínios carregados:", dominios)
+    #st.write(f"Total de domínios carregados: {len(dominios)}")    
     return dominios
 
 # ------------------------------
