@@ -64,19 +64,14 @@ def classificar_llm(prompt_texto):
         return f"Erro: {e}"
 
 # ------------------------------
-# Extrair domínios e percentagens
+# Extrair domínios formatados
 # ------------------------------
-def extrair_dominios_e_percentagens(resposta):
-    if resposta.lower().strip() == "indefinido":
-        return ("Indefinido", "", "", "")
-    padrao = r"\d+\.\s*(.*?)\s*\((\d+)%\)"
-    correspondencias = re.findall(padrao, resposta)
-    if len(correspondencias) >= 2:
-        return correspondencias[0][0], correspondencias[0][1], correspondencias[1][0], correspondencias[1][1]
-    elif len(correspondencias) == 1:
-        return correspondencias[0][0], correspondencias[0][1], "", ""
-    else:
-        return resposta, "", "", ""
+def extrair_resposta_formatada(resposta):
+    resposta = resposta.strip()
+    if resposta.lower() == "indefinido":
+        return "Indefinido"
+    resposta = resposta.replace("*", "").replace("\n", " ").strip()
+    return resposta
 
 # ------------------------------
 # INTERFACE
@@ -96,59 +91,59 @@ uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xl
 if uploaded_file:
     xls = pd.ExcelFile(uploaded_file)
     sheet_dados = st.selectbox("📄 Sheet com o título/resumo:", xls.sheet_names)
-    sheet_class = st.selectbox("📑 Sheet com classificações manuais (ou candidaturas duplicadas):", xls.sheet_names)
+    sheet_class = st.selectbox("📑 Sheet com classificações manuais (múltiplas linhas por candidatura):", xls.sheet_names)
 
     df_dados = pd.read_excel(xls, sheet_name=sheet_dados)
     df_class = pd.read_excel(xls, sheet_name=sheet_class)
 
     if 'cand' not in df_dados.columns or 'cand' not in df_class.columns:
-        st.error("Ambas as sheets devem conter a coluna 'cand' para cruzamento.")
+        st.error("Ambas as sheets devem conter a coluna 'cand'.")
         st.stop()
 
     col_titulo = st.selectbox("📝 Coluna do título:", df_dados.columns)
     col_resumo = st.selectbox("📋 Coluna do resumo:", df_dados.columns)
-    col_manual1 = st.selectbox("✅ Classificação manual 1 (opcional):", ["Nenhuma"] + df_class.columns.tolist())
-    col_manual2 = st.selectbox("📘 Classificação manual 2 (opcional):", ["Nenhuma"] + df_class.columns.tolist())
+    col_manual = st.selectbox("✅ Coluna das classificações manuais:", df_class.columns)
 
-    # Merge
-    df_merged = df_class.merge(df_dados[['cand', col_titulo, col_resumo]], on='cand', how='left')
+    # Agrupar todas as classificações manuais por cand
+    classificacoes_agrupadas = (
+        df_class
+        .groupby('cand')[col_manual]
+        .apply(lambda x: "; ".join(sorted(set(str(v).strip() for v in x if pd.notna(v)))))
+        .reset_index()
+        .rename(columns={col_manual: "Classificação Manual"})
+    )
 
-    if df_merged[col_titulo].isna().all():
-        st.error("Não foi possível cruzar os dados. Verifica se os valores de 'cand' coincidem entre as sheets.")
-        st.stop()
+    # Escolher para cada cand a primeira linha com título e resumo preenchidos
+    df_dados_validos = df_dados.dropna(subset=[col_titulo, col_resumo])
+    dados_unicos = df_dados_validos.groupby('cand').first().reset_index()
+
+    # Juntar os dois
+    df_final = dados_unicos.merge(classificacoes_agrupadas, on='cand', how='left')
+
+    # Quantidade a classificar
+    quantidade = st.radio("Quantas candidaturas queres classificar?", ["1", "5", "10", "20", "50", "Todas"])
+    df_filtrado = df_final if quantidade == "Todas" else df_final.head(int(quantidade))
 
     dominios = carregar_dominios(config_enei[versao_enei]["ficheiro"], config_enei[versao_enei]["sheet"])
-
-    quantidade = st.radio("Quantos projetos queres classificar?", ["1", "5", "10", "20", "50", "Todos"])
-    df_filtrado = df_merged if quantidade == "Todos" else df_merged.head(int(quantidade))
-
     st.info(f"🧮 Estimativa: {len(df_filtrado) * 610} tokens (aprox.)")
 
     if st.button("🚀 Classificar com LLM"):
         resultados = []
         with st.spinner("A classificar projetos..."):
             for _, row in df_filtrado.iterrows():
-                titulo = str(row.get(col_titulo, ""))
-                resumo = str(row.get(col_resumo, ""))
+                titulo = str(row.get(col_titulo, "")).strip()
+                resumo = str(row.get(col_resumo, "")).strip()
                 prompt = preparar_prompt(titulo, resumo, dominios)
                 resposta = classificar_llm(prompt)
-                d1, p1, d2, p2 = extrair_dominios_e_percentagens(resposta)
+                dominio_llm = extrair_resposta_formatada(resposta)
 
                 linha = {
-                    "cand": row.get("cand", ""),
+                    "cand": row["cand"],
                     "Projeto": titulo,
                     "Resumo": resumo,
-                    "Domínio LLM 1": d1.replace("*", ""),
-                    "% 1": p1,
-                    "Domínio LLM 2": d2.replace("*", ""),
-                    "% 2": p2
+                    "Classificação Manual": row.get("Classificação Manual", ""),
+                    "Domínios LLM": dominio_llm
                 }
-
-                if col_manual1 != "Nenhuma":
-                    linha["Classificação Manual 1"] = row.get(col_manual1, "")
-                if col_manual2 != "Nenhuma":
-                    linha["Classificação Manual 2"] = row.get(col_manual2, "")
-
                 resultados.append(linha)
 
         final_df = pd.DataFrame(resultados)
