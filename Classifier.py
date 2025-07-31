@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import re
 from io import BytesIO
-from openai import AzureOpenAI  # Import para nova API
+from openai import AzureOpenAI
 
 # ------------------------------
 # Cliente Azure OpenAI
@@ -95,26 +95,32 @@ uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xl
 
 if uploaded_file:
     xls = pd.ExcelFile(uploaded_file)
-    sheet = st.selectbox("📄 Escolhe a folha (sheet):", xls.sheet_names)
-    df = pd.read_excel(xls, sheet_name=sheet)
+    sheet_dados = st.selectbox("📄 Sheet com o título/resumo:", xls.sheet_names)
+    sheet_class = st.selectbox("📑 Sheet com classificações manuais (ou candidaturas duplicadas):", xls.sheet_names)
 
-    colunas = df.columns.tolist()
-    col_titulo = st.selectbox("📝 Coluna do título:", colunas)
-    col_resumo = st.selectbox("📋 Coluna do resumo:", colunas)
-    col_manual1 = st.selectbox("✅ Classificação manual principal (opcional):", ["Nenhuma"] + colunas)
-    col_manual2 = st.selectbox("📘 Classificação manual alternativa (opcional):", ["Nenhuma"] + colunas)
+    df_dados = pd.read_excel(xls, sheet_name=sheet_dados)
+    df_class = pd.read_excel(xls, sheet_name=sheet_class)
+
+    if 'cand' not in df_dados.columns or 'cand' not in df_class.columns:
+        st.error("Ambas as sheets devem conter a coluna 'cand' para cruzamento.")
+        st.stop()
+
+    col_titulo = st.selectbox("📝 Coluna do título:", df_dados.columns)
+    col_resumo = st.selectbox("📋 Coluna do resumo:", df_dados.columns)
+    col_manual1 = st.selectbox("✅ Classificação manual 1 (opcional):", ["Nenhuma"] + df_class.columns.tolist())
+    col_manual2 = st.selectbox("📘 Classificação manual 2 (opcional):", ["Nenhuma"] + df_class.columns.tolist())
+
+    # Merge
+    df_merged = df_class.merge(df_dados[['cand', col_titulo, col_resumo]], on='cand', how='left')
+
+    if df_merged[col_titulo].isna().all():
+        st.error("Não foi possível cruzar os dados. Verifica se os valores de 'cand' coincidem entre as sheets.")
+        st.stop()
 
     dominios = carregar_dominios(config_enei[versao_enei]["ficheiro"], config_enei[versao_enei]["sheet"])
 
-    modo_classificacao = st.radio("Modo de classificação:", ["Classificação normal", "Classificação por grupo (ex: por domínio manual)"])
-
-    if modo_classificacao == "Classificação normal":
-        quantidade = st.radio("Quantos projetos queres classificar?", ["1", "5", "10", "20", "50", "Todos"])
-        df_filtrado = df if quantidade == "Todos" else df.head(int(quantidade))
-    else:
-        coluna_grupo = st.selectbox("📂 Coluna para agrupar (ex: domínio manual):", colunas)
-        n_grupo = st.selectbox("📌 Nº de projetos por grupo:", [1, 2, 3, 5, 10])
-        df_filtrado = df.groupby(df[coluna_grupo], group_keys=False).apply(lambda x: x.sample(n=min(n_grupo, len(x)), random_state=42))
+    quantidade = st.radio("Quantos projetos queres classificar?", ["1", "5", "10", "20", "50", "Todos"])
+    df_filtrado = df_merged if quantidade == "Todos" else df_merged.head(int(quantidade))
 
     st.info(f"🧮 Estimativa: {len(df_filtrado) * 610} tokens (aprox.)")
 
@@ -129,12 +135,12 @@ if uploaded_file:
                 d1, p1, d2, p2 = extrair_dominios_e_percentagens(resposta)
 
                 linha = {
-                    "NIPC": row.get("NIPC", ""),
+                    "cand": row.get("cand", ""),
                     "Projeto": titulo,
                     "Resumo": resumo,
-                    "Domínio LLM 1": d1,
+                    "Domínio LLM 1": d1.replace("*", ""),
                     "% 1": p1,
-                    "Domínio LLM 2": d2,
+                    "Domínio LLM 2": d2.replace("*", ""),
                     "% 2": p2
                 }
 
