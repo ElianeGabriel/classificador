@@ -105,15 +105,10 @@ if uploaded_file:
     col_manual = st.selectbox("✅ Coluna das classificações manuais:", df_class.columns)
 
     # Agrupar todas as classificações manuais por cand
-    classificacoes_agrupadas = (
-        df_class
-        .groupby('cand')[col_manual]
-        .apply(lambda x: "; ".join(sorted(set(str(v).strip() for v in x if pd.notna(v)))))
-        .reset_index(drop=True)
-        .rename_axis("cand")
-        .reset_index()
-        .rename(columns={col_manual: "Classificação Manual"})
-    )
+    classificacoes_agrupadas = df_class.groupby('cand').agg({
+        col_manual: lambda x: "; ".join(sorted(set(str(v).strip() for v in x if pd.notna(v))))
+    }).rename(columns={col_manual: "Classificação Manual"}).reset_index()
+
     # Escolher para cada cand a primeira linha com título e resumo preenchidos
     df_dados_validos = df_dados.dropna(subset=[col_titulo, col_resumo])
     dados_unicos = df_dados_validos.groupby('cand').first().reset_index()
