@@ -1,22 +1,25 @@
 import streamlit as st
 import pandas as pd
-import openai
 import os
-from io import BytesIO
 import re
+from io import BytesIO
+from openai import AzureOpenAI  # Import para nova API
 
 # ------------------------------
-# API KEY (por variável de ambiente segura)
+# Cliente Azure OpenAI
 # ------------------------------
-#openai.api_key = os.getenv("OPENAI_API_KEY")
+client = AzureOpenAI(
+    api_key=os.getenv("AZURE_OPENAI_KEY"),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+)
 
 # ------------------------------
 # Preparar o prompt para o LLM
 # ------------------------------
 def preparar_prompt(titulo, resumo, dominios):
     prompt = f"""
-Classifica o projeto abaixo num ou dois dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente ({st.session_state.get('versao_enei', 'ENEI')}):
-
+Classifica o projeto abaixo num ou dois dos seguintes domínios prioritários da Estratégia Nacional de Especialização Inteligente ({st.session_state.get('versao_enei', 'ENEI')}):\n
 {chr(10).join([f"- {d}" for d in dominios])}
 
 Projeto:
@@ -43,36 +46,16 @@ def carregar_dominios(ficheiro, sheet):
         texto_completo = f"{nome}. {descricao}"
         if area:
             texto_completo += f" ({area})"
-
         dominios.append(texto_completo)
-        
-    # Mostrar os domínios carregados no Streamlit
-    #st.write("🧾 Domínios carregados:", dominios)
-    #st.write(f"Total de domínios carregados: {len(dominios)}")    
     return dominios
 
 # ------------------------------
-# Função para classificar com OpenAI LLM
+# Classificar com Azure OpenAI
 # ------------------------------
-#def classificar_llm(prompt_texto):
-#    try:
-#        resposta = openai.chat.completions.create(
-#            model="gpt-4o",
-#            messages=[{"role": "user", "content": prompt_texto}],
-#            temperature=0
-#        )
-#        return resposta.choices[0].message.content.strip()
-#    except Exception as e:
-#        return f"Erro: {e}"
-
 def classificar_llm(prompt_texto):
     try:
-        resposta = openai.ChatCompletion.create(
-            engine=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-            api_key=os.getenv("AZURE_OPENAI_KEY"),
-            api_base=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            api_type="azure",
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        resposta = client.chat.completions.create(
+            model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
             messages=[{"role": "user", "content": prompt_texto}],
             temperature=0
         )
@@ -81,7 +64,7 @@ def classificar_llm(prompt_texto):
         return f"Erro: {e}"
 
 # ------------------------------
-# Extrair domínios e percentagens da resposta
+# Extrair domínios e percentagens
 # ------------------------------
 def extrair_dominios_e_percentagens(resposta):
     if resposta.lower().strip() == "indefinido":
@@ -98,7 +81,7 @@ def extrair_dominios_e_percentagens(resposta):
 # ------------------------------
 # INTERFACE
 # ------------------------------
-st.markdown("### 🤖 Classificador Automático com LLM (OpenAI)")
+st.markdown("### 🤖 Classificador Automático com LLM (Azure OpenAI)")
 
 versao_enei = st.sidebar.radio("Seleciona a versão da ENEI:", ["ENEI 2020", "ENEI 2030"])
 st.session_state["versao_enei"] = versao_enei
