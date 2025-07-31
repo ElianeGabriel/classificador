@@ -8,7 +8,7 @@ import re
 # ------------------------------
 # API KEY (por variável de ambiente segura)
 # ------------------------------
-openai.api_key = os.getenv("OPENAI_API_KEY")
+#openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # ------------------------------
 # Preparar o prompt para o LLM
@@ -54,10 +54,25 @@ def carregar_dominios(ficheiro, sheet):
 # ------------------------------
 # Função para classificar com OpenAI LLM
 # ------------------------------
+#def classificar_llm(prompt_texto):
+#    try:
+#        resposta = openai.chat.completions.create(
+#            model="gpt-4o",
+#            messages=[{"role": "user", "content": prompt_texto}],
+#            temperature=0
+#        )
+#        return resposta.choices[0].message.content.strip()
+#    except Exception as e:
+#        return f"Erro: {e}"
+
 def classificar_llm(prompt_texto):
     try:
-        resposta = openai.chat.completions.create(
-            model="gpt-4o",
+        resposta = openai.ChatCompletion.create(
+            engine=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            api_key=os.getenv("AZURE_OPENAI_KEY"),
+            api_base=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            api_type="azure",
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
             messages=[{"role": "user", "content": prompt_texto}],
             temperature=0
         )
