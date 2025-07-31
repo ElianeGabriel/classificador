@@ -105,16 +105,30 @@ if uploaded_file:
     col_manual = st.selectbox("✅ Coluna das classificações manuais:", df_class.columns)
 
     # Agrupar todas as classificações manuais por cand
-    classificacoes_agrupadas = df_class.groupby('cand').agg({
+    
+    # 1. Eliminar linhas com título ou resumo em falta
+    df_dados_validos = df_dados.dropna(subset=[col_titulo, col_resumo])
+    
+    # 2. Identificar os 'cand' que têm título/resumo E classificação manual
+    cands_com_dados = set(df_dados_validos['cand'])
+    cands_com_classificacoes = set(df_class['cand'])
+    cands_validos = cands_com_dados.intersection(cands_com_classificacoes)
+    
+    # 3. Filtrar só esses válidos
+    df_dados_validos = df_dados_validos[df_dados_validos['cand'].isin(cands_validos)]
+    df_class_filtrado = df_class[df_class['cand'].isin(cands_validos)]
+    
+    # 4. Agregar classificações manuais
+    classificacoes_agrupadas = df_class_filtrado.groupby('cand').agg({
         col_manual: lambda x: "; ".join(sorted(set(str(v).strip() for v in x if pd.notna(v))))
     }).rename(columns={col_manual: "Classificação Manual"}).reset_index()
-
-    # Escolher para cada cand a primeira linha com título e resumo preenchidos
-    df_dados_validos = df_dados.dropna(subset=[col_titulo, col_resumo])
+    
+    # 5. Obter apenas uma linha por candidatura com título e resumo válidos
     dados_unicos = df_dados_validos.groupby('cand').first().reset_index()
+    
+    # 6. Juntar tudo
+    df_final = dados_unicos.merge(classificacoes_agrupadas, on='cand', how='inner')
 
-    # Juntar os dois
-    df_final = dados_unicos.merge(classificacoes_agrupadas, on='cand', how='left')
 
     # Quantidade a classificar
     quantidade = st.radio("Quantas candidaturas queres classificar?", ["1", "5", "10", "20", "50", "Todas"])
