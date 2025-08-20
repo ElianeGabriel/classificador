@@ -1,45 +1,65 @@
 import streamlit as st
 import importlib.util
 import sys
+import os
 
-# Configurações iniciais da app
 st.set_page_config(page_title="Classificador de Projetos ENEI", layout="wide")
 st.title("🤖 Classificador Inteligente de Projetos ENEI")
 
-# Sidebar principal
+# --------- Verificação rápida do ambiente (visível na sidebar)
+with st.sidebar.expander("⚙️ Ambiente"):
+    def ok(val): return "✅" if val else "⚠️"
+    st.write(f"{ok(os.getenv('AZURE_OPENAI_KEY'))} AZURE_OPENAI_KEY")
+    st.write(f"{ok(os.getenv('AZURE_OPENAI_ENDPOINT'))} AZURE_OPENAI_ENDPOINT")
+    st.write(f"{ok(os.getenv('AZURE_OPENAI_API_VERSION'))} AZURE_OPENAI_API_VERSION")
+    st.write(f"{ok(os.getenv('AZURE_OPENAI_DEPLOYMENT'))} AZURE_OPENAI_DEPLOYMENT (chat)")
+    st.write(f"{ok(os.getenv('AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT'))} AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT (embeddings)")
+
 modo_app = st.sidebar.radio(
     "Seleciona o modo:",
-    ["🏠 Página Inicial", "🧠 Classificação com LLM", "📈 Métricas e Visualizações"]
+    ["🏠 Página Inicial", "🧠 Classificação com LLM", "📈 Métricas e Visualizações"],
+    index=1
 )
 
-# Função para carregar e executar um módulo externo
 def carregar_modulo(nome_ficheiro, nome_modulo):
-    spec = importlib.util.spec_from_file_location(nome_modulo, nome_ficheiro)
-    modulo = importlib.util.module_from_spec(spec)
-    sys.modules[nome_modulo] = modulo
-    spec.loader.exec_module(modulo)
-    return modulo
+    try:
+        spec = importlib.util.spec_from_file_location(nome_modulo, nome_ficheiro)
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules[nome_modulo] = modulo
+        spec.loader.exec_module(modulo)
+        return modulo
+    except FileNotFoundError:
+        st.error(f"Ficheiro não encontrado: `{nome_ficheiro}`.")
+    except Exception as e:
+        st.exception(e)
+    return None
 
-# Página Inicial
-if modo_app == "🏠 Página Inicial":
+def pagina_inicial():
     st.markdown("""
     ## 👋 Bem-vindo ao Classificador de Projetos ENEI
-    Esta aplicação permite classificar automaticamente projetos de I&D nos domínios da Estratégia Nacional de Especialização Inteligente (ENEI 2020 e 2030), usando um modelo de linguagem avançado (LLM).
-
-    ### Funcionalidades:
-    - Classificação automática com LLM (GPT)
-    - Comparação com classificações manuais
-    - Visualização de métricas de desempenho
-
-    **Escolhe uma opção no menu lateral para começar.**
+    Esta aplicação classifica projetos de I&D nos domínios da ENEI **2020** ou **2030**, usando LLM.
+    
+    ### O que podes fazer
+    - **🧠 Classificar** projetos (LLM, com opção de percentagens por similaridade)
+    - **📈 Avaliar** a qualidade (comparação com classificação manual, métricas e gráficos)
+    
+    Usa o menu lateral para escolher a secção.
     """)
 
-# Classificação com LLM
-elif modo_app == "🧠 Classificação com LLM":
-    st.subheader("🧠 Classificação Automática com Modelo de Linguagem (LLM)")
-    carregar_modulo("Classifier.py", "classifier")
+def pagina_classificacao():
+    modulo = carregar_modulo("Classifier.py", "classifier")
+    if modulo and hasattr(modulo, "run"):
+        modulo.run()  # se mais tarde quiseres encapsular no próprio ficheiro
+    # Nota: o teu Classifier.py atual executa no import, por isso mesmo sem run() funciona.
 
-# Avaliação
+def pagina_metricas():
+    modulo = carregar_modulo("metrics.py", "metrics")
+    if modulo and hasattr(modulo, "run"):
+        modulo.run()  # idem
+
+if modo_app == "🏠 Página Inicial":
+    pagina_inicial()
+elif modo_app == "🧠 Classificação com LLM":
+    pagina_classificacao()
 elif modo_app == "📈 Métricas e Visualizações":
-    st.subheader("📈 Avaliação das Classificações (LLM vs Manual)")
-    carregar_modulo("metrics.py", "metrics")
+    pagina_metricas()
