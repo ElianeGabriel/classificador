@@ -57,9 +57,24 @@ def pagina_metricas():
     if modulo and hasattr(modulo, "run"):
         modulo.run()  # idem
 
+# app.py (apenas a parte do menu + handlers)
+def pagina_alocacao():
+    modulo = carregar_modulo("ExpertsAllocator.py", "experts_allocator")
+    if modulo and hasattr(modulo, "run"):
+        modulo.run()
+
+modo_app = st.sidebar.radio(
+    "Seleciona o modo:",
+    ["🏠 Página Inicial", "🧠 Classificação com LLM", "👥 Alocação de Peritos", "📈 Métricas e Visualizações"],
+    index=1
+)
+
+
 if modo_app == "🏠 Página Inicial":
     pagina_inicial()
 elif modo_app == "🧠 Classificação com LLM":
     pagina_classificacao()
+elif modo_app == "👥 Alocação de Peritos":
+    pagina_alocacao()
 elif modo_app == "📈 Métricas e Visualizações":
     pagina_metricas()
