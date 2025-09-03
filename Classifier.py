@@ -47,8 +47,7 @@ Regras:
 def extrair_resposta_formatada(resposta):
     """Normaliza para 'A, B' (ou 'A'), aceita ';' e ',' como separadores."""
     r = (resposta or "").strip().replace("*", " ")
-    # tudo numa linha
-    r = re.sub(r"\s+", " ", r)
+    r = re.sub(r"\s+", " ", r)  # tudo numa linha
     if r.lower() == "indefinido":
         return "Indefinido"
     partes = [p.strip() for p in re.split(r"[;,]", r) if p.strip()]
@@ -60,11 +59,21 @@ def extrair_resposta_formatada(resposta):
 # Leitura dos Domínios
 # -------------------------------------------------
 def carregar_dominios(ficheiro, sheet):
-    """
-    Devolve uma lista de dicts: {"nome": <nome>, "texto": <nome + descrição (+ área)>}
-    """
-    df = pd.read_excel(ficheiro, sheet_name=sheet)
-    df.dropna(subset=['Dominios'], inplace=True)
+    """Devolve uma lista de dicts: {"nome": <nome>, "texto": <nome + descrição (+ área)>}"""
+    try:
+        df = pd.read_excel(ficheiro, sheet_name=sheet)
+    except FileNotFoundError:
+        st.error(f"Ficheiro de domínios não encontrado: **{ficheiro}**. Coloca-o na pasta da app.")
+        st.stop()
+    except Exception as e:
+        st.error(f"Erro ao ler ficheiro de domínios: {e}")
+        st.stop()
+
+    if "Dominios" not in df.columns:
+        st.error("A sheet de domínios tem de ter a coluna **'Dominios'**.")
+        st.stop()
+
+    df = df.dropna(subset=['Dominios']).copy()
 
     dominios = []
     for _, row in df.iterrows():
@@ -73,6 +82,10 @@ def carregar_dominios(ficheiro, sheet):
         area = str(row.get('Principal área de atuação (Opções de Resposta)', '')).strip()
         texto_completo = f"{nome}. {descricao}" + (f" ({area})" if area else "")
         dominios.append({"nome": nome, "texto": texto_completo})
+
+    if not dominios:
+        st.error("Lista de domínios ficou vazia. Verifica as colunas/linhas do ficheiro.")
+        st.stop()
     return dominios
 
 # -------------------------------------------------
@@ -85,19 +98,17 @@ def classificar_llm(prompt_texto):
             messages=[{"role": "user", "content": prompt_texto}],
             temperature=0
         )
-        return resp.choices[0].message.content.strip()
+        return (resp.choices[0].message.content or "").strip()
     except Exception as e:
-        return f"Erro: {e}"
+        st.error(f"Erro no Azure OpenAI (chat): {e}")
+        return ""
 
 # -------------------------------------------------
 # Embeddings + Similaridade
 # -------------------------------------------------
 def obter_embedding(texto: str):
     try:
-        resp = client.embeddings.create(
-            model=EMB_DEPLOYMENT,
-            input=texto
-        )
+        resp = client.embeddings.create(model=EMB_DEPLOYMENT, input=texto)
         return np.array(resp.data[0].embedding, dtype=float)
     except Exception as e:
         st.warning(f"Falha ao obter embeddings: {e}")
@@ -137,7 +148,6 @@ def formatar_com_percentagens(dominios_llm_str, sims_dict):
     valores = [(n, sims_dict.get(n, 0.0)) for n in nomes]
     total = sum(v for _, v in valores) or 1e-12
     percent = {n: round(100 * v / total) for n, v in valores}
-    # ajusta para somar exatamente 100
     soma = sum(percent.values())
     if soma != 100:
         primeiro = nomes[0]
@@ -145,21 +155,46 @@ def formatar_com_percentagens(dominios_llm_str, sims_dict):
     return ", ".join([f"{n} ({percent[n]}%)" for n in nomes])
 
 # -------------------------------------------------
-# UI
+# UI (tudo dentro de run() para evitar duplicações)
 # -------------------------------------------------
-st.markdown("### 🤖 Classificador Automático com LLM (Azure OpenAI)")
+def run():
+    st.markdown("### 🤖 Classificador Automático com LLM (Azure OpenAI)")
 
-versao_enei = st.sidebar.radio("Seleciona a versão da ENEI:", ["ENEI 2020", "ENEI 2030"])
-st.session_state["versao_enei"] = versao_enei
+    # Diagnóstico rápido do ambiente
+    with st.expander("⚙️ Diagnóstico Azure/OpenAI"):
+        colA, colB, colC = st.columns(3)
+        colA.write(f"Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT') or '—'}")
+        colB.write(f"API Version: {os.getenv('AZURE_OPENAI_API_VERSION') or '—'}")
+        colC.write(f"Chat Deployment: {CHAT_DEPLOYMENT or '—'}")
+        if st.button("▶️ Testar Azure Chat"):
+            try:
+                r = client.chat.completions.create(
+                    model=CHAT_DEPLOYMENT,
+                    messages=[{"role": "user", "content": "pong?"}],
+                    temperature=0
+                )
+                st.success(f"OK: {r.choices[0].message.content!r}")
+            except Exception as e:
+                st.error(f"Falha: {e}")
 
-config_enei = {
-    "ENEI 2020": {"ficheiro": "descricao2020.xlsx", "sheet": "Eixos"},
-    "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios"}
-}
+    if not CHAT_DEPLOYMENT:
+        st.error("**AZURE_OPENAI_DEPLOYMENT** não definido. Define o *nome do deployment* de chat no ambiente.")
+        st.stop()
 
-uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xlsx):", type=["xlsx"])
+    versao_enei = st.sidebar.radio("Seleciona a versão da ENEI:", ["ENEI 2020", "ENEI 2030"])
+    st.session_state["versao_enei"] = versao_enei
 
-if uploaded_file:
+    config_enei = {
+        "ENEI 2020": {"ficheiro": "descricao2020.xlsx", "sheet": "Eixos"},
+        "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios"}
+    }
+
+    uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xlsx):", type=["xlsx"])
+
+    if not uploaded_file:
+        st.info("Carrega um ficheiro .xlsx com os projetos reais para começar.")
+        return
+
     xls = pd.ExcelFile(uploaded_file)
     sheet_dados = st.selectbox("📄 Sheet com o título/resumo:", xls.sheet_names)
     sheet_class = st.selectbox("📑 Sheet com classificações manuais (múltiplas linhas por candidatura):", xls.sheet_names)
@@ -168,7 +203,7 @@ if uploaded_file:
     df_class = pd.read_excel(xls, sheet_name=sheet_class)
 
     if 'cand' not in df_dados.columns or 'cand' not in df_class.columns:
-        st.error("Ambas as sheets devem conter a coluna 'cand'.")
+        st.error("Ambas as sheets devem conter a coluna **'cand'**.")
         st.stop()
 
     col_titulo = st.selectbox("📝 Coluna do título:", df_dados.columns)
@@ -206,14 +241,17 @@ if uploaded_file:
     dominios = carregar_dominios(ficheiro_desc, sheet_desc)
 
     # Opcional: percentagens por similaridade
-    mostrar_percentagens = st.checkbox("Adicionar percentagens baseadas em similaridade (embeddings)", value=False,
-                                       help="Se marcado, as percentagens são calculadas por similaridade coseno entre o texto do projeto e as descrições dos domínios. Se não fizer sentido, deixa desligado.")
+    mostrar_percentagens = st.checkbox(
+        "Adicionar percentagens baseadas em similaridade (embeddings)",
+        value=False,
+        help="Se ligado, as percentagens são calculadas por similaridade coseno entre o texto do projeto e as descrições dos domínios."
+    )
 
     # Pré-computar embeddings dos domínios (cache)
     emb_dom_map = {}
     if mostrar_percentagens:
         if not EMB_DEPLOYMENT:
-            st.warning("Defina AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT para usar percentagens por similaridade.")
+            st.warning("Defina **AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT** para usar percentagens por similaridade.")
         else:
             emb_dom_map = embeddings_dos_dominios_cache(dominios, versao_enei)
 
@@ -226,9 +264,12 @@ if uploaded_file:
                 titulo = str(row.get(col_titulo, "")).strip()
                 resumo = str(row.get(col_resumo, "")).strip()
 
+                if not titulo and not resumo:
+                    continue  # ignora linhas completamente vazias
+
                 prompt = preparar_prompt(titulo, resumo, dominios)
                 resposta = classificar_llm(prompt)
-                dominios_llm = extrair_resposta_formatada(resposta)  # "A, B" ou "A" ou "Indefinido"
+                dominios_llm = extrair_resposta_formatada(resposta) if resposta else "Indefinido"
 
                 saida = dominios_llm
                 if mostrar_percentagens and dominios_llm.lower() != "indefinido" and emb_dom_map:
@@ -244,23 +285,28 @@ if uploaded_file:
                 }
                 resultados.append(linha)
 
-        final_df = pd.DataFrame(resultados)
-        final_df.index += 1
-        st.session_state["classificacoes_llm"] = final_df
+        if not resultados:
+            st.warning("Nada classificado (linhas vazias ou erro na chamada). Vê o diagnóstico Azure acima.")
+        else:
+            final_df = pd.DataFrame(resultados)
+            final_df.index += 1
+            st.session_state["classificacoes_llm"] = final_df
 
-# -------------------------------------------------
-# Resultados + Download
-# -------------------------------------------------
-if "classificacoes_llm" in st.session_state:
-    st.success("✅ Classificação concluída com sucesso!")
-    st.markdown("### 🔎 Resultados")
-    st.dataframe(st.session_state["classificacoes_llm"], use_container_width=True)
+    # Resultados + Download (se já existirem)
+    if "classificacoes_llm" in st.session_state:
+        st.success("✅ Classificação concluída com sucesso!")
+        st.markdown("### 🔎 Resultados")
+        st.dataframe(st.session_state["classificacoes_llm"], use_container_width=True)
 
-    buffer = BytesIO()
-    st.session_state["classificacoes_llm"].to_excel(buffer, index=False)
-    st.download_button(
-        label="📥 Download (.xlsx)",
-        data=buffer.getvalue(),
-        file_name=f"classificacao_llm_{st.session_state.get('versao_enei','enei').replace(' ', '').lower()}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        buffer = BytesIO()
+        st.session_state["classificacoes_llm"].to_excel(buffer, index=False)
+        st.download_button(
+            label="📥 Download (.xlsx)",
+            data=buffer.getvalue(),
+            file_name=f"classificacao_llm_{st.session_state.get('versao_enei','enei').replace(' ', '').lower()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+# Execução direta (opcional)
+if __name__ == "__main__":
+    run()
