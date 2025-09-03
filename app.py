@@ -32,7 +32,7 @@ def carregar_modulo(nome_ficheiro, nome_modulo):
 # Página Inicial
 def pagina_inicial():
     st.markdown("""
-    ## 👋 Bem-vindo ao Classificador de Projetos ENEI
+    ## 👋 Bem-vindo ao Classificador de Projetos 
     Esta aplicação permite classificar automaticamente projetos de I&D nos domínios da Estratégia Nacional de Especialização Inteligente (ENEI 2020 e 2030), e alocar peritos a projetos.
     """)
 
