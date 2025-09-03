@@ -38,7 +38,7 @@ def pagina_inicial():
 
 # Classificação com LLM
 def pagina_classificacao():
-    st.subheader("🧠 Classificação Automática com Modelo de Linguagem (LLM)")
+    st.subheader("🧠 Classificação Automática com LLM)
     modulo = carregar_modulo("Classifier.py", "classifier")
     if hasattr(modulo, "run"):
         modulo.run()
