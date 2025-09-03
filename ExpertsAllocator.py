@@ -48,7 +48,7 @@ def embed_many(texts, dim_fallback=1536):
     return vecs
 
 # =============================
-# Conflitos
+# Conflitos (mantido, mas **não usado** por agora)
 # =============================
 def has_conflict(project_row, expert_row):
     """
@@ -264,16 +264,19 @@ def run():
                     else:
                         S[i, j] = _cos(proj_vecs[i], exp_vecs[j])
 
-            # remover conflitos (nome/org do perito presentes no nome/resumo do projeto)
-            conflict_log = []
-            for i in range(P):
-                prow = dfp_use.iloc[i]
-                for j in range(E):
-                    erow = dfe_use.iloc[j]
-                    if has_conflict({"Nome": prow["Nome"], "Resumo": prow["Resumo"]},
-                                    {"Nome": erow["Nome"], "Organização": erow["Organização"]}):
-                        conflict_log.append((prow["Nº Projecto"], erow["Nome"], "org/nome coincide"))
-                        S[i, j] = -1e9
+            # -----------------------------------------------------------
+            # ⚠️ CONFLITOS DESATIVADOS (comentado por enquanto)
+            # conflict_log = []
+            # for i in range(P):
+            #     prow = dfp_use.iloc[i]
+            #     for j in range(E):
+            #         erow = dfe_use.iloc[j]
+            #         if has_conflict({"Nome": prow["Nome"], "Resumo": prow["Resumo"]},
+            #                         {"Nome": erow["Nome"], "Organização": erow["Organização"]}):
+            #             conflict_log.append((prow["Nº Projecto"], erow["Nome"], "org/nome coincide"))
+            #             S[i, j] = -1e9
+            # -----------------------------------------------------------
+            conflict_log = []  # placeholder vazio enquanto conflitos estão off
 
             # -------- por projeto: topN por embeddings -> LLM re-ranking -> dinâmico 3..5 (ou fixo)
             linhas = []
@@ -313,7 +316,6 @@ def run():
                 # montar coluna opcional com interesses
                 if incluir_interesses:
                     peritos_interesses = []
-                    # dicionário rápido para lookup
                     dmap = {c["Nome"]: c["Interesses"] for c in candidatos}
                     for nome in nomes_final:
                         peritos_interesses.append(f"{nome} — {dmap.get(nome, '')}")
@@ -343,11 +345,11 @@ def run():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-            # relatório opcional de conflitos
-            if conflict_log:
-                with st.expander("🚫 Pares descartados por conflito"):
-                    confl_df = pd.DataFrame(conflict_log, columns=["Nº Projecto", "Perito", "Motivo"])
-                    st.dataframe(confl_df, use_container_width=True)
+            # Relatório de conflitos (desativado enquanto a verificação está comentada)
+            # if conflict_log:
+            #     with st.expander("🚫 Pares descartados por conflito"):
+            #         confl_df = pd.DataFrame(conflict_log, columns=["Nº Projecto", "Perito", "Motivo"])
+            #         st.dataframe(confl_df, use_container_width=True)
 
 # Execução direta opcional
 if __name__ == "__main__":
