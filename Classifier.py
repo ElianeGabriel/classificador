@@ -44,6 +44,7 @@ Regras:
 """.strip()
     return prompt
 
+
 def extrair_resposta_formatada(resposta):
     """Normaliza para 'A, B' (ou 'A'), aceita ';' e ',' como separadores."""
     r = (resposta or "").strip().replace("*", " ")
@@ -89,7 +90,7 @@ def carregar_dominios(ficheiro, sheet):
     return dominios
 
 # -------------------------------------------------
-# LLM Chat
+# LLM Chat (com detalhe de finish_reason)
 # -------------------------------------------------
 def classificar_llm(prompt_texto):
     try:
@@ -98,7 +99,12 @@ def classificar_llm(prompt_texto):
             messages=[{"role": "user", "content": prompt_texto}],
             temperature=0
         )
-        return (resp.choices[0].message.content or "").strip()
+        choice = resp.choices[0]
+        content = (choice.message.content or "").strip()
+        finish = getattr(choice, "finish_reason", None)
+        if finish and finish != "stop":
+            st.warning(f"LLM terminou com finish_reason='{finish}'.")
+        return content
     except Exception as e:
         st.error(f"Erro no Azure OpenAI (chat): {e}")
         return ""
@@ -114,6 +120,7 @@ def obter_embedding(texto: str):
         st.warning(f"Falha ao obter embeddings: {e}")
         return None
 
+
 @st.cache_data(show_spinner=False)
 def embeddings_dos_dominios_cache(dominios, versao_enei: str):
     """Cacheia embeddings de cada domínio por versão ENEI e texto do domínio."""
@@ -123,6 +130,7 @@ def embeddings_dos_dominios_cache(dominios, versao_enei: str):
         if emb is not None:
             emb_map[d["nome"]] = emb
     return emb_map
+
 
 def percentagens_por_similaridade(titulo, resumo, dominios, emb_dom_map):
     """Calcula similaridade coseno projeto -> domínios, devolve {nome: score}."""
@@ -137,6 +145,7 @@ def percentagens_por_similaridade(titulo, resumo, dominios, emb_dom_map):
         sim = float(np.dot(emb_proj, emb_dom) / (norm_proj * (np.linalg.norm(emb_dom) + 1e-12)))
         sims[nome] = max(sim, 0.0)  # corta negativos
     return sims
+
 
 def formatar_com_percentagens(dominios_llm_str, sims_dict):
     """Recebe 'A, B' e dicionário {nome: sim}, devolve 'A (xx%), B (yy%)' normalizado a 100."""
@@ -212,6 +221,12 @@ def run():
 
     # 1) Limpar linhas inválidas (sem título/resumo)
     df_dados_validos = df_dados.dropna(subset=[col_titulo, col_resumo])
+    if df_dados_validos.empty:
+        st.error(
+            "🚫 Todas as linhas estão sem título e/ou resumo na sheet de dados.\n"
+            f"➡️ Colunas escolhidas: Título='{col_titulo}', Resumo='{col_resumo}'."
+        )
+        st.stop()
 
     # 2) Interseção de cands com dados + classificações manuais
     cands_validos = set(df_dados_validos['cand']).intersection(set(df_class['cand']))
@@ -230,6 +245,25 @@ def run():
 
     # 6) Merge
     df_final = dados_unicos.merge(classificacoes_agrupadas, on='cand', how='inner')
+
+    # ---- DEBUG: contagens e sanidade --------
+    st.info(
+        "🧾 Contagens | "
+        f"Linhas sheet dados: {len(df_dados)} | "
+        f"Com título+resumo: {len(df_dados_validos)} | "
+        f"Linhas sheet manuais: {len(df_class)} | "
+        f"cands em dados: {df_dados_validos['cand'].nunique()} | "
+        f"cands em manuais: {df_class['cand'].nunique()} | "
+        f"Interseção cands: {len(cands_validos)} | "
+        f"Linhas após merge: {len(df_final)}"
+    )
+
+    if len(df_final) == 0:
+        st.error(
+            "🚫 Merge vazio: não há interseção de 'cand' entre as duas sheets selecionadas.\n"
+            "➡️ Verifica se escolheste as sheets certas e se ambas têm a coluna 'cand' com os mesmos valores."
+        )
+        st.stop()
 
     # Quantidade a classificar
     quantidade = st.radio("Quantas candidaturas queres classificar?", ["1", "5", "10", "20", "50", "Todas"], horizontal=True)
@@ -257,6 +291,9 @@ def run():
 
     st.info(f"🧮 Estimativa rápida: ~{len(df_filtrado) * 600} tokens (aprox.)")
 
+    # Modo debug por linha
+    modo_debug = st.checkbox("🛠️ Modo debug (mostrar prompt e resposta crua por linha)", value=False)
+
     if st.button("🚀 Classificar com LLM", use_container_width=True):
         resultados = []
         with st.spinner("A classificar projetos..."):
@@ -265,34 +302,54 @@ def run():
                 resumo = str(row.get(col_resumo, "")).strip()
 
                 if not titulo and not resumo:
-                    continue  # ignora linhas completamente vazias
+                    st.warning(f"⚠️ Linha ignorada (cand={row['cand']}) por falta de título e resumo.")
+                    continue
 
                 prompt = preparar_prompt(titulo, resumo, dominios)
                 resposta = classificar_llm(prompt)
-                dominios_llm = extrair_resposta_formatada(resposta) if resposta else "Indefinido"
+
+                if not resposta:
+                    st.error(f"❌ LLM devolveu vazio nesta linha. cand={row['cand']} | Projeto='{titulo[:80]}'")
+                    if modo_debug:
+                        with st.expander(f"Debug cand={row['cand']}"):
+                            st.code(prompt, language="markdown")
+                            st.write("**Resposta crua do LLM:** (string vazia)")
+                    dominios_llm = "Indefinido"
+                else:
+                    if modo_debug:
+                        with st.expander(f"Debug cand={row['cand']}"):
+                            st.code(prompt, language="markdown")
+                            st.write("**Resposta crua do LLM:**")
+                            st.text(resposta)
+                    dominios_llm = extrair_resposta_formatada(resposta)
 
                 saida = dominios_llm
                 if mostrar_percentagens and dominios_llm.lower() != "indefinido" and emb_dom_map:
                     sims = percentagens_por_similaridade(titulo, resumo, dominios, emb_dom_map)
                     saida = formatar_com_percentagens(dominios_llm, sims)
 
-                linha = {
+                resultados.append({
                     "cand": row["cand"],
                     "Projeto": titulo,
                     "Resumo": resumo,
                     "Classificação Manual": row.get("Classificação Manual", ""),
                     "Domínios LLM": saida
-                }
-                resultados.append(linha)
+                })
 
         if not resultados:
-            st.warning("Nada classificado (linhas vazias ou erro na chamada). Vê o diagnóstico Azure acima.")
+            st.error(
+                "🚫 Nada classificado.\n"
+                "Causas típicas:\n"
+                "• Merge vazio entre as sheets (já sinalizado acima, se for o caso);\n"
+                "• Títulos/Resumos vazios nas linhas escolhidas (ver aviso no topo);\n"
+                "• Azure Chat sem resposta (testa em '⚙️ Diagnóstico Azure/OpenAI')."
+            )
         else:
             final_df = pd.DataFrame(resultados)
             final_df.index += 1
             st.session_state["classificacoes_llm"] = final_df
 
-    # Resultados + Download (se já existirem)
+    # Resultados + Download
     if "classificacoes_llm" in st.session_state:
         st.success("✅ Classificação concluída com sucesso!")
         st.markdown("### 🔎 Resultados")
@@ -307,6 +364,5 @@ def run():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-# Execução direta (opcional)
 if __name__ == "__main__":
     run()
