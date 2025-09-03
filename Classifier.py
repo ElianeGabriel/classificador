@@ -18,8 +18,11 @@ CHAT_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 EMB_DEPLOYMENT  = os.getenv("AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT")
 
 # -------------------------------------------------
-# Utils
+# Helpers gerais
 # -------------------------------------------------
+def _strip(x):
+    return ("" if pd.isna(x) else str(x)).strip()
+
 def preparar_prompt(titulo, resumo, dominios):
     nomes = [d["nome"] for d in dominios]
     prompt = f"""
@@ -61,21 +64,17 @@ def carregar_dominios(ficheiro, sheet):
     except Exception as e:
         st.error(f"Erro ao ler ficheiro de domínios: {e}")
         st.stop()
-
     if "Dominios" not in df.columns:
         st.error("A sheet de domínios tem de ter a coluna **'Dominios'**.")
         st.stop()
-
     df = df.dropna(subset=['Dominios']).copy()
-
     dominios = []
     for _, row in df.iterrows():
-        nome = str(row['Dominios']).strip()
-        descricao = str(row.get('Descrição', '')).strip()
-        area = str(row.get('Principal área de atuação (Opções de Resposta)', '')).strip()
+        nome = _strip(row['Dominios'])
+        descricao = _strip(row.get('Descrição', ''))
+        area = _strip(row.get('Principal área de atuação (Opções de Resposta)', ''))
         texto_completo = f"{nome}. {descricao}" + (f" ({area})" if area else "")
         dominios.append({"nome": nome, "texto": texto_completo})
-
     if not dominios:
         st.error("Lista de domínios ficou vazia. Verifica as colunas/linhas do ficheiro.")
         st.stop()
@@ -142,26 +141,63 @@ def formatar_com_percentagens(dominios_llm_str, sims_dict):
         percent[primeiro] = percent[primeiro] + (100 - soma)
     return ", ".join([f"{n} ({percent[n]}%)" for n in nomes])
 
-# ---------------- helpers de limpeza/coalesce ----------------
-def _strip(s):
-    return ("" if pd.isna(s) else str(s)).strip()
+# ---------------- coalesce multi-sheet ----------------
+def build_sources_options(sheets_map):
+    """
+    Devolve lista ['Sheet::Coluna'] para todas as sheets com coluna 'cand'.
+    Ignora a coluna 'cand' na lista de opções.
+    """
+    options = []
+    for sname, df in sheets_map.items():
+        if 'cand' not in df.columns:
+            continue
+        for col in df.columns:
+            if col == 'cand':
+                continue
+            options.append(f"{sname}::{col}")
+    return sorted(options)
 
-def coalesce_row(row, cols):
-    for c in cols:
-        if c in row:
-            v = _strip(row[c])
-            if v:
-                return v
-    return ""
+def series_from_source(sheets_map, source):
+    """Devolve DataFrame com ['cand', source_alias] a partir de 'Sheet::Col'."""
+    sname, col = source.split("::", 1)
+    if sname not in sheets_map:
+        return pd.DataFrame(columns=["cand", source])
+    df = sheets_map[sname]
+    if 'cand' not in df.columns or col not in df.columns:
+        return pd.DataFrame(columns=["cand", source])
+    tmp = df[['cand', col]].copy()
+    tmp['cand'] = tmp['cand'].apply(_strip)
+    tmp[source] = tmp[col].apply(_strip)
+    tmp = tmp.drop(columns=[col])
+    return tmp[tmp[source] != ""]
 
-def guess_column(columns, keywords):
-    # devolve a primeira coluna cujo nome contiver qualquer keyword
-    cols_lower = {c: c.lower() for c in columns}
-    for kw in keywords:
-        for c, lc in cols_lower.items():
-            if kw in lc:
-                return c
-    return None
+def coalesce_from_sources(sheets_map, sources, alias):
+    """
+    Faz outer-join por 'cand' de todas as fontes e coalesce por ordem.
+    Retorna DataFrame ['cand', alias]
+    """
+    if not sources:
+        return pd.DataFrame(columns=["cand", alias])
+    acc = None
+    for src in sources:
+        s = series_from_source(sheets_map, src)
+        if s.empty:
+            continue
+        if acc is None:
+            acc = s
+        else:
+            acc = acc.merge(s, on="cand", how="outer")
+    if acc is None or acc.empty:
+        return pd.DataFrame(columns=["cand", alias])
+    # coalesce por ordem das fontes
+    vals_cols = [src for src in sources if src in acc.columns]
+    acc[alias] = ""
+    for c in vals_cols:
+        acc[alias] = acc[alias].mask(acc[alias] == "", acc[c])
+    acc = acc[['cand', alias]].copy()
+    acc[alias] = acc[alias].apply(_strip)
+    acc = acc[acc[alias] != ""]
+    return acc
 
 # -------------------------------------------------
 # UI
@@ -169,7 +205,7 @@ def guess_column(columns, keywords):
 def run():
     st.markdown("### 🤖 Classificador Automático com LLM (Azure OpenAI)")
 
-    # Diagnóstico rápido Azure
+    # Diagnóstico Azure
     with st.expander("⚙️ Diagnóstico Azure/OpenAI"):
         colA, colB, colC = st.columns(3)
         colA.write(f"Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT') or '—'}")
@@ -198,115 +234,95 @@ def run():
         "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios"}
     }
 
-    uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xlsx):", type=["xlsx"])
+    uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos (.xlsx):", type=["xlsx"])
     if not uploaded_file:
         st.info("Carrega um ficheiro .xlsx para começar.")
         return
 
+    # Lê todas as sheets para permitir fontes multi-sheet
     xls = pd.ExcelFile(uploaded_file)
-    sheet_dados = st.selectbox("📄 Sheet com os dados dos projetos:", xls.sheet_names)
-    sheet_class = st.selectbox("📑 Sheet com classificações manuais (opcional):", ["(Nenhuma)"] + xls.sheet_names)
+    sheets_map = {s: pd.read_excel(xls, sheet_name=s) for s in xls.sheet_names}
+    # normalizar 'cand' para string em todas as sheets que a possuam
+    for s in sheets_map.values():
+        if 'cand' in s.columns:
+            s['cand'] = s['cand'].apply(_strip)
 
-    df_dados = pd.read_excel(xls, sheet_name=sheet_dados)
-    df_class = pd.read_excel(xls, sheet_name=sheet_class) if sheet_class != "(Nenhuma)" else pd.DataFrame(columns=["cand"])
+    # Opções de fontes "sheet::coluna"
+    all_sources = build_sources_options(sheets_map)
 
-    if 'cand' not in df_dados.columns:
-        st.error("A sheet de dados tem de conter a coluna **'cand'**.")
-        st.stop()
-    if sheet_class != "(Nenhuma)" and 'cand' not in df_class.columns:
-        st.error("A sheet de manuais tem de conter a coluna **'cand'**.")
-        st.stop()
+    st.markdown("#### 🔎 Seleção de Fontes (podes misturar sheets diferentes)")
+    st.caption("Escolhe **uma ou mais** fontes para cada campo. A primeira não vazia por cand é usada. O **Resumo é obrigatório**; o **Título é opcional**.")
 
-    # ---------- detetar colunas prováveis ----------
-    texto_title_keywords  = ["título", "titulo", "designação", "designacao", "nome do projeto", "nome do projecto", "nome do projeto", "nome"]
-    texto_resumo_keywords = ["resumo", "sumário", "sumario", "abstract", "descrição", "descricao", "objetivo", "objectivo"]
+    # Sugestões de defaults por keywords
+    def guess_sources(keywords, limit=3):
+        out = []
+        for src in all_sources:
+            _, col = src.split("::", 1)
+            lc = col.lower()
+            if any(k in lc for k in keywords):
+                out.append(src)
+        return out[:limit]
 
-    guess_titulo = guess_column(df_dados.columns, texto_title_keywords) or df_dados.columns[0]
-    guess_resumo = guess_column(df_dados.columns, texto_resumo_keywords) or (df_dados.columns[1] if len(df_dados.columns)>1 else df_dados.columns[0])
+    default_title = guess_sources(["título", "titulo", "designa", "nome"], 3)
+    default_summary = guess_sources(["resumo", "sumár", "sumar", "abstract", "descri", "objetiv", "objectiv"], 3)
 
-    col_titulo = st.selectbox("📝 Coluna principal do título/designação:", df_dados.columns, index=df_dados.columns.get_loc(guess_titulo))
-    col_resumo = st.selectbox("📋 Coluna principal do resumo/sumário:", df_dados.columns, index=df_dados.columns.get_loc(guess_resumo))
+    titulo_sources = st.multiselect("📝 Fontes para **TÍTULO** (opcional)", options=all_sources, default=default_title)
+    resumo_sources = st.multiselect("📋 Fontes para **RESUMO** (obrigatório)", options=all_sources, default=default_summary)
 
-    # colunas alternativas para coalesce
-    alt_titulo_cols = st.multiselect(
-        "Opções de fallback para TÍTULO (usadas quando a principal vier vazia nessa linha):",
-        df_dados.columns,
-        default=[c for c in df_dados.columns if c != col_titulo and guess_column([c], texto_title_keywords)]
-    )
-    alt_resumo_cols = st.multiselect(
-        "Opções de fallback para RESUMO (usadas quando a principal vier vazia nessa linha):",
-        df_dados.columns,
-        default=[c for c in df_dados.columns if c != col_resumo and guess_column([c], texto_resumo_keywords)]
-    )
-
-    # ------------- limpeza/coalesce linha-a-linha -------------
-    df_dados = df_dados.copy()
-    # normalizar cand para string limpa (para merges robustos)
-    df_dados["cand"] = df_dados["cand"].apply(lambda x: _strip(x))
-
-    # construir colunas coalescidas
-    def build_title(row):
-        return _strip(row.get(col_titulo)) or coalesce_row(row, alt_titulo_cols)
-
-    def build_summary(row):
-        return _strip(row.get(col_resumo)) or coalesce_row(row, alt_resumo_cols)
-
-    df_dados["__TITULO__"] = df_dados.apply(build_title, axis=1)
-    df_dados["__RESUMO__"] = df_dados.apply(build_summary, axis=1)
-
-    # válidas se houver pelo menos título OU resumo
-    mask_validos = (df_dados["__TITULO__"] != "") | (df_dados["__RESUMO__"] != "")
-    df_dados_validos = df_dados[mask_validos].copy()
-
-    if df_dados_validos.empty:
-        st.error(
-            "🚫 Após coalescer colunas, todas as linhas continuam sem Título e/ou Resumo.\n"
-            "➡️ Ajusta as colunas principais e as de fallback acima."
-        )
+    if not resumo_sources:
+        st.error("Precisas de escolher pelo menos **uma** fonte para o RESUMO.")
         st.stop()
 
-    # preparar manuais (opcional)
-    if not df_class.empty:
-        df_class = df_class.copy()
-        df_class["cand"] = df_class["cand"].apply(lambda x: _strip(x))
-        col_manual = st.selectbox("✅ Coluna das classificações manuais:", [c for c in df_class.columns if c != "cand"] or ["(Nenhuma)"])
-        if col_manual == "(Nenhuma)":
-            df_class = pd.DataFrame(columns=["cand", "Classificação Manual"])
-        else:
-            df_class = df_class.groupby("cand").agg({
-                col_manual: lambda x: "; ".join(sorted(set(_strip(v) for v in x if _strip(v))))
-            }).rename(columns={col_manual: "Classificação Manual"}).reset_index()
+    # Construir Título/Resumo coalescidos por cand
+    df_title = coalesce_from_sources(sheets_map, titulo_sources, "__TITULO__") if titulo_sources else pd.DataFrame(columns=["cand", "__TITULO__"])
+    df_sum   = coalesce_from_sources(sheets_map, resumo_sources, "__RESUMO__")
+
+    if df_sum.empty:
+        st.error("As fontes de **RESUMO** não produziram valores. Ajusta a seleção acima.")
+        st.stop()
+
+    # Juntar título (opcional) com resumo (obrigatório)
+    df_base = df_sum
+    if not df_title.empty:
+        df_base = df_base.merge(df_title, on="cand", how="left")
     else:
-        col_manual = "(Nenhuma)"
+        df_base["__TITULO__"] = ""  # título opcional
 
-    # merge (se houver manuais)
-    if not df_class.empty:
-        df_final = df_dados_validos.merge(df_class, on="cand", how="inner")
-        tem_intersecao = not df_final.empty
+    # Sheet/coluna de classificações manuais (opcional)
+    st.markdown("#### ✅ Classificações manuais (opcional)")
+    manual_sheet = st.selectbox("Sheet de classificações manuais:", ["(Nenhuma)"] + xls.sheet_names)
+    if manual_sheet != "(Nenhuma)":
+        df_class = sheets_map[manual_sheet].copy()
+        if 'cand' not in df_class.columns:
+            st.error("A sheet de manuais selecionada não tem coluna **'cand'**.")
+            st.stop()
+        df_class['cand'] = df_class['cand'].apply(_strip)
+        col_manual = st.selectbox("Coluna das classificações manuais:", [c for c in df_class.columns if c != "cand"])
+        df_class = df_class.groupby("cand").agg({
+            col_manual: lambda x: "; ".join(sorted(set(_strip(v) for v in x if _strip(v))))
+        }).rename(columns={col_manual: "Classificação Manual"}).reset_index()
+        df_final = df_base.merge(df_class, on="cand", how="inner")
+        inter = len(set(df_base['cand']).intersection(set(df_class['cand'])))
     else:
-        df_final = df_dados_validos.copy()
+        df_final = df_base.copy()
         df_final["Classificação Manual"] = ""
-        tem_intersecao = True
+        inter = "N/A"
 
-    # ---- diagnóstico
+    # Diagnóstico
     st.info(
         "🧾 Contagens | "
-        f"Linhas sheet dados: {len(df_dados)} | "
-        f"Com título+resumo (após coalesce): {len(df_dados_validos)} | "
-        f"Linhas sheet manuais: {len(df_class) if col_manual != '(Nenhuma)' else 0} | "
-        f"Interseção cands: {'N/A' if col_manual=='(Nenhuma)' else len(set(df_dados_validos['cand']).intersection(set(df_class['cand'])))} | "
+        f"cands com RESUMO: {df_sum['cand'].nunique()} | "
+        f"cands com TÍTULO: {df_title['cand'].nunique() if not df_title.empty else 0} | "
+        f"Interseção com manuais: {inter} | "
         f"Linhas após merge: {len(df_final)}"
     )
 
-    if not tem_intersecao:
-        st.warning(
-            "Não há interseção de 'cand' entre dados e manuais. "
-            "Vou **prosseguir sem classificações manuais** para não bloquear o processo."
-        )
-        df_final = df_dados_validos.copy()
+    if manual_sheet != "(Nenhuma)" and df_final.empty:
+        st.warning("Não há interseção de 'cand' entre RESUMO (e TÍTULO) e os manuais. Vou **prosseguir sem manuais**.")
+        df_final = df_base.copy()
         df_final["Classificação Manual"] = ""
 
-    # Quantidade
+    # Escolha de quantidade
     quantidade = st.radio("Quantas candidaturas queres classificar?", ["1", "5", "10", "20", "50", "Todas"], horizontal=True)
     df_filtrado = df_final if quantidade == "Todas" else df_final.head(int(quantidade))
 
@@ -319,9 +335,8 @@ def run():
     mostrar_percentagens = st.checkbox(
         "Adicionar percentagens baseadas em similaridade (embeddings)",
         value=False,
-        help="Se ligado, as percentagens são calculadas por similaridade coseno entre o texto do projeto e as descrições dos domínios."
+        help="Calculadas por similaridade coseno entre o texto do projeto e as descrições dos domínios."
     )
-
     emb_dom_map = {}
     if mostrar_percentagens:
         if not EMB_DEPLOYMENT:
@@ -337,8 +352,8 @@ def run():
         resultados = []
         with st.spinner("A classificar projetos..."):
             for _, row in df_filtrado.iterrows():
-                titulo = _strip(row["__TITULO__"])
-                resumo = _strip(row["__RESUMO__"])
+                titulo = _strip(row["__TITULO__"])  # pode ser ""
+                resumo = _strip(row["__RESUMO__"])  # obrigatório
 
                 prompt = preparar_prompt(titulo, resumo, dominios)
                 resposta = classificar_llm(prompt)
@@ -372,11 +387,7 @@ def run():
                 })
 
         if not resultados:
-            st.error(
-                "🚫 Nada classificado.\n"
-                "• Verifica as colunas principais e de fallback para Título/Resumo.\n"
-                "• Testa o Azure no painel de diagnóstico."
-            )
+            st.error("🚫 Nada classificado. Ajusta as fontes (sobretudo de RESUMO) e testa o Azure no painel de diagnóstico.")
         else:
             final_df = pd.DataFrame(resultados)
             final_df.index += 1
