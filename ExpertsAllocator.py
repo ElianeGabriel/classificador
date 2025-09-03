@@ -212,7 +212,7 @@ def run():
     incluir_resumo = st.checkbox("Incluir descrição/resumo do projeto na tabela", value=True)
     incluir_interesses = st.checkbox("Incluir interesses dos peritos selecionados", value=False)
 
-    debug = st.checkbox("🛠️ Mostrar prompt/resposta do LLM", value=False)
+    #debug = st.checkbox("🛠️ Mostrar prompt/resposta do LLM", value=False)
 
     if st.button("🚀 Alocar", use_container_width=True):
         with st.spinner("A calcular correspondências e alocar..."):
