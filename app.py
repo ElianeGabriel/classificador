@@ -9,7 +9,7 @@ st.title("🤖 Classificador Inteligente de Projetos ENEI")
 # Sidebar principal
 modo_app = st.sidebar.radio(
     "Seleciona o modo:",
-    ["🏠 Página Inicial", "🧠 Classificação com LLM", "📈 Métricas e Visualizações"]
+    ["🏠 Página Inicial", "🧠 Classificação com LLM", "👥 Alocação de Peritos", "📈 Métricas e Visualizações"]
 )
 
 # Verificação rápida do ambiente (opcional)
@@ -33,20 +33,20 @@ def carregar_modulo(nome_ficheiro, nome_modulo):
 def pagina_inicial():
     st.markdown("""
     ## 👋 Bem-vindo ao Classificador de Projetos ENEI
-    Esta aplicação permite classificar automaticamente projetos de I&D nos domínios da Estratégia Nacional de Especialização Inteligente (ENEI 2020 e 2030), usando um modelo de linguagem avançado (LLM).
-
-    ### Funcionalidades:
-    - Classificação automática com LLM (GPT)
-    - Comparação com classificações manuais
-    - Visualização de métricas de desempenho
-
-    **Escolhe uma opção no menu lateral para começar.**
+    Esta aplicação permite classificar automaticamente projetos de I&D nos domínios da Estratégia Nacional de Especialização Inteligente (ENEI 2020 e 2030), e alocar peritos a projetos.
     """)
 
 # Classificação com LLM
 def pagina_classificacao():
     st.subheader("🧠 Classificação Automática com Modelo de Linguagem (LLM)")
     modulo = carregar_modulo("Classifier.py", "classifier")
+    if hasattr(modulo, "run"):
+        modulo.run()
+
+# Alocação de Peritos
+def pagina_peritos():
+    st.subheader("👥 Alocação de Peritos a Projetos")
+    modulo = carregar_modulo("ExpertsAllocator.py", "experts_allocator")
     if hasattr(modulo, "run"):
         modulo.run()
 
@@ -62,5 +62,7 @@ if modo_app == "🏠 Página Inicial":
     pagina_inicial()
 elif modo_app == "🧠 Classificação com LLM":
     pagina_classificacao()
+elif modo_app == "👥 Alocação de Peritos":
+    pagina_peritos()
 elif modo_app == "📈 Métricas e Visualizações":
     pagina_metricas()
