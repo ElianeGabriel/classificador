@@ -4,7 +4,7 @@ import sys
 import os
 
 st.set_page_config(page_title="Classificador de Projetos", layout="wide")
-st.title("🤖 Classificador de Projetos Automático")
+st.title("🤖 Classificador Automático")
 
 # Sidebar principal
 modo_app = st.sidebar.radio(
