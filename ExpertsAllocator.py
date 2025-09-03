@@ -128,15 +128,16 @@ Responde **apenas** com os nomes escolhidos, um por linha, sem numeração nem c
             if len(out) < k_min: out = [c["Nome"] for c in candidates[:k_min]]
             if len(out) > k_max: out = out[:k_max]
 
-        if debug:
-            with st.expander("🛠️ Debug LLM (prompt + resposta)"):
-                st.code(prompt, language="markdown")
-                st.text(raw)
+        # # ---- Debug (comentado para poupar tokens) ----
+        # if debug:
+        #     with st.expander("🛠️ Debug LLM (prompt + resposta)"):
+        #         st.code(prompt, language="markdown")
+        #         st.text(raw)
 
         return out
     except Exception as e:
-        if debug:
-            st.warning(f"Falha LLM (re-ranking): {e}")
+        # if debug:
+        #     st.warning(f"Falha LLM (re-ranking): {e}")
         k = fixed_k if fixed_k else max(k_min, 3)
         return [c["Nome"] for c in candidates[:k]]
 
@@ -212,7 +213,8 @@ def run():
     incluir_resumo = st.checkbox("Incluir descrição/resumo do projeto na tabela", value=True)
     incluir_interesses = st.checkbox("Incluir interesses dos peritos selecionados", value=False)
 
-    debug = st.checkbox("🛠️ Mostrar prompt/resposta do LLM", value=False)
+    # ---- Checkbox de debug COMENTADO para não incentivar uso
+    # debug = st.checkbox("🛠️ Mostrar prompt/resposta do LLM", value=False)
 
     if st.button("🚀 Alocar", use_container_width=True):
         with st.spinner("A calcular correspondências e alocar..."):
@@ -260,29 +262,18 @@ def run():
             for i in range(P):
                 for j in range(E):
                     if proj_vecs[i] is None or exp_vecs[j] is None:
-                        S[i, j] = -1e9
+                        S[i, j] = -1e-9  # manter como valor muito baixo
                     else:
                         S[i, j] = _cos(proj_vecs[i], exp_vecs[j])
 
-            # -----------------------------------------------------------
-            # ⚠️ CONFLITOS DESATIVADOS (comentado por enquanto)
-            # conflict_log = []
-            # for i in range(P):
-            #     prow = dfp_use.iloc[i]
-            #     for j in range(E):
-            #         erow = dfe_use.iloc[j]
-            #         if has_conflict({"Nome": prow["Nome"], "Resumo": prow["Resumo"]},
-            #                         {"Nome": erow["Nome"], "Organização": erow["Organização"]}):
-            #             conflict_log.append((prow["Nº Projecto"], erow["Nome"], "org/nome coincide"))
-            #             S[i, j] = -1e9
-            # -----------------------------------------------------------
-            conflict_log = []  # placeholder vazio enquanto conflitos estão off
+            # ---- Conflitos comentados (não aplicar bloqueio)
+            conflict_log = []
 
             # -------- por projeto: topN por embeddings -> LLM re-ranking -> dinâmico 3..5 (ou fixo)
             linhas = []
             for i in range(P):
                 idx_sorted = np.argsort(-S[i])  # desc
-                idx_validos = [ix for ix in idx_sorted if S[i, ix] > -1e8]
+                idx_validos = [ix for ix in idx_sorted if S[i, ix] > -1e-8]
                 if not idx_validos:
                     linhas.append({
                         "Nº Projecto": dfp_use.iloc[i]["Nº Projecto"],
@@ -293,10 +284,7 @@ def run():
                     })
                     continue
 
-                if usar_full_list:
-                    idx_top = idx_validos  # sem pré-seleção
-                else:
-                    idx_top = idx_validos[:topN]
+                idx_top = idx_validos if usar_full_list else idx_validos[:topN]
 
                 candidatos = [{
                     "Nome": dfe_use.iloc[j]["Nome"],
@@ -310,15 +298,12 @@ def run():
                     candidates=candidatos,
                     k_min=3, k_max=5,
                     fixed_k=int(fixed_k) if fixed_k else None,
-                    debug=debug
+                    debug=False  # <— forçado a False para não gastar tokens
                 )
 
-                # montar coluna opcional com interesses
                 if incluir_interesses:
-                    peritos_interesses = []
                     dmap = {c["Nome"]: c["Interesses"] for c in candidatos}
-                    for nome in nomes_final:
-                        peritos_interesses.append(f"{nome} — {dmap.get(nome, '')}")
+                    peritos_interesses = [f"{n} — {dmap.get(n, '')}" for n in nomes_final]
                     col_interesses_val = " | ".join(peritos_interesses)
                 else:
                     col_interesses_val = None
@@ -345,7 +330,7 @@ def run():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-            # Relatório de conflitos (desativado enquanto a verificação está comentada)
+            # (Relatório de conflitos continua comentado)
             # if conflict_log:
             #     with st.expander("🚫 Pares descartados por conflito"):
             #         confl_df = pd.DataFrame(conflict_log, columns=["Nº Projecto", "Perito", "Motivo"])
