@@ -47,8 +47,15 @@ def embed_many(texts, dim_fallback=1536):
         vecs.append(v if v is not None else np.zeros(dim_fallback))
     return vecs
 
+# =============================
+# Conflitos
+# =============================
 def has_conflict(project_row, expert_row):
-    """Conflito se nome/organização do perito apareceu em Nome ou Resumo do projeto."""
+    """
+    CONFLITO se:
+      - Nome do perito OU Organização do perito
+        aparecem em Nome (entidade) OU Resumo do projeto.
+    """
     perito_nome = _clean(expert_row.get("Nome", ""))
     perito_org  = _clean(expert_row.get("Organização", ""))
     blob = (_clean(project_row.get("Nome", "")) + " " + _clean(project_row.get("Resumo", ""))).lower()
@@ -56,10 +63,18 @@ def has_conflict(project_row, expert_row):
     if perito_org  and perito_org.lower()  in blob: return True
     return False
 
-def llm_rerank(project_name, project_summary, candidates, k_min=3, k_max=5, debug=False):
-    """candidates = [{'Nome','Interesses','Organização'}] -> lista ordenada de nomes (3..5)."""
+# =============================
+# LLM re-ranking (dinâmico 3–5 ou fixo)
+# =============================
+def llm_rerank(project_name, project_summary, candidates, k_min=3, k_max=5, fixed_k=None, debug=False):
+    """
+    candidates = [{'Nome','Interesses','Organização'}]
+    -> devolve lista ordenada de nomes.
+    Se fixed_k for 3/4/5, força tamanho; caso contrário o LLM escolhe entre k_min..k_max.
+    """
     if not CHAT_DEPLOYMENT:
-        return [c["Nome"] for c in candidates[:k_min]]
+        k = fixed_k if fixed_k else max(k_min, 3)
+        return [c["Nome"] for c in candidates[:k]]
 
     blocos = []
     for i, c in enumerate(candidates, 1):
@@ -67,9 +82,14 @@ def llm_rerank(project_name, project_summary, candidates, k_min=3, k_max=5, debu
         blocos.append(f"{i}. {c['Nome']} | Interesses: {c['Interesses']}{org}")
     candidatos_txt = "\n".join(blocos)
 
+    if fixed_k:
+        instr_sel = f"Seleciona exatamente {fixed_k} peritos por ORDEM de melhor correspondência."
+    else:
+        instr_sel = f"Seleciona entre {k_min} e {k_max} peritos (idealmente {min(max(k_min,3),k_max)}) por ORDEM de melhor correspondência."
+
     prompt = f"""
 És um avaliador. Recebes a descrição de um projeto e uma lista de peritos com os respetivos interesses.
-Seleciona entre {k_min} e {k_max} peritos (idealmente {min(max(k_min,3),k_max)}) por ORDEM de melhor correspondência ao projeto.
+{instr_sel}
 
 Projeto:
 - Nome (título): {project_name or "(sem nome)"}
@@ -78,7 +98,7 @@ Projeto:
 Peritos (nome e interesses):
 {candidatos_txt}
 
-Responde **apenas** com os nomes escolhidos, um por linha, sem numeração ou explicações.
+Responde **apenas** com os nomes escolhidos, um por linha, sem numeração nem comentários.
 """.strip()
 
     try:
@@ -88,22 +108,25 @@ Responde **apenas** com os nomes escolhidos, um por linha, sem numeração ou ex
             temperature=0
         )
         raw = (r.choices[0].message.content or "").strip()
-        linhas = [l.strip().strip("-•1234567890. ") for l in raw.splitlines() if l.strip()]
+        linhas = [l.strip().strip("-•*—·. 0123456789") for l in raw.splitlines() if l.strip()]
         nomes_validos = {c["Nome"]: True for c in candidates}
         out = []
         for l in linhas:
             if l in nomes_validos:
                 out.append(l)
             else:
-                # match case-insensitive
                 for nome in nomes_validos.keys():
                     if l.lower() == nome.lower():
                         out.append(nome)
                         break
-        if len(out) < k_min:
-            out = [c["Nome"] for c in candidates[:k_min]]
-        if len(out) > k_max:
-            out = out[:k_max]
+        # sanidade
+        if fixed_k:
+            k = int(fixed_k)
+            if len(out) < k: out = [c["Nome"] for c in candidates[:k]]
+            if len(out) > k: out = out[:k]
+        else:
+            if len(out) < k_min: out = [c["Nome"] for c in candidates[:k_min]]
+            if len(out) > k_max: out = out[:k_max]
 
         if debug:
             with st.expander("🛠️ Debug LLM (prompt + resposta)"):
@@ -114,7 +137,8 @@ Responde **apenas** com os nomes escolhidos, um por linha, sem numeração ou ex
     except Exception as e:
         if debug:
             st.warning(f"Falha LLM (re-ranking): {e}")
-        return [c["Nome"] for c in candidates[:k_min]]
+        k = fixed_k if fixed_k else max(k_min, 3)
+        return [c["Nome"] for c in candidates[:k]]
 
 # =============================
 # UI
@@ -124,6 +148,7 @@ def run():
 
     with st.expander("⚙️ Azure/OpenAI"):
         st.write(f"Chat deployment: {CHAT_DEPLOYMENT or '—'} | Embeddings: {EMB_DEPLOYMENT or '—'}")
+        st.caption("Pré-seleção top-N: filtragem rápida por similaridade vetorial (embeddings) antes do LLM, para acelerar e reduzir custo.")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -142,7 +167,7 @@ def run():
         st.error(f"Erro a ler ficheiros: {e}")
         return
 
-    # Mapeamento (defaults para os teus nomes)
+    # Mapeamento
     cols_p = dfp.columns.tolist()
     cols_e = dfe.columns.tolist()
 
@@ -151,7 +176,7 @@ def run():
     col_resumo = st.selectbox("Coluna Resumo", cols_p, index=cols_p.index("Resumo") if "Resumo" in cols_p else min(2, len(cols_p)-1))
 
     col_nomeexp   = st.selectbox("Coluna Nome do Perito", cols_e, index=cols_e.index("Nome") if "Nome" in cols_e else 0)
-    col_orgexp    = st.selectbox("Coluna Organização (perito)", cols_e, index=cols_e.index("Organização") if "Organização" in cols_e else (cols_e.index("Organizacao") if "Organizacao" in cols_e else min(1, len(cols_e)-1)))
+    col_orgexp    = st.selectbox("Coluna Organização (perito)", cols_e, index=(cols_e.index("Organização") if "Organização" in cols_e else (cols_e.index("Organizacao") if "Organizacao" in cols_e else min(1, len(cols_e)-1))))
     col_interesse = st.selectbox("Coluna Interesses de pesquisa (obrigatória)", cols_e, index=cols_e.index("Interesses de pesquisa") if "Interesses de pesquisa" in cols_e else 0)
 
     st.divider()
@@ -168,9 +193,25 @@ def run():
         ids_escolhidos = None
 
     st.subheader("Parâmetros")
-    k_min = st.number_input("Nº mínimo de peritos", 3, 5, 3, 1)
-    k_max = st.number_input("Nº máximo de peritos", 3, 5, 5, 1)
-    topN = st.slider("Pré-selecionar top-N por embeddings antes do LLM", 5, 30, 12, 1)
+    # Modo cardinalidade: dinâmico 3–5 vs fixar exatamente
+    modo_k = st.radio("Nº de peritos por projeto", ["Dinâmico (3–5)", "Fixar exatamente"], horizontal=True)
+    fixed_k = None
+    if modo_k == "Fixar exatamente":
+        fixed_k = st.selectbox("Escolhe o nº exato", [3, 4, 5], index=2)  # por defeito 5
+    else:
+        st.caption("Dinâmico: o LLM decide entre 3 e 5 com base na qualidade do match.")
+
+    col3, col4 = st.columns(2)
+    with col3:
+        topN = st.slider("Pré-selecionar top-N por embeddings", 5, 50, 12, 1,
+                         help="Filtra rapidamente os peritos mais prováveis antes do LLM. Aumenta N para ser mais abrangente; reduz para maior rapidez.")
+    with col4:
+        usar_full_list = st.checkbox("Desligar pré-seleção (usar todos os peritos no LLM)", value=False)
+
+    st.subheader("Campos no output")
+    incluir_resumo = st.checkbox("Incluir descrição/resumo do projeto na tabela", value=True)
+    incluir_interesses = st.checkbox("Incluir interesses dos peritos selecionados", value=False)
+
     debug = st.checkbox("🛠️ Mostrar prompt/resposta do LLM", value=False)
 
     if st.button("🚀 Alocar", use_container_width=True):
@@ -186,7 +227,7 @@ def run():
             elif modo == "Escolher por Nº Projecto":
                 dfp_use = dfp_use[dfp_use["Nº Projecto"].astype(str).isin(set(ids_escolhidos or []))]
 
-            # texto a comparar (Resumo principalmente; Nome só complementa)
+            # texto para embeddings (Resumo é o principal; Nome complementa)
             dfp_use["texto_proj"] = (dfp_use["Resumo"].replace("", np.nan).fillna("") + " || " +
                                      dfp_use["Nome"].replace("", np.nan).fillna("")).str.strip()
 
@@ -196,16 +237,17 @@ def run():
             dfe_use["Organização"]  = dfe_use[col_orgexp].apply(_clean) if col_orgexp in dfe_use else ""
             dfe_use["Interesses"]   = dfe_use[col_interesse].apply(_clean)
 
-            antes = len(dfe_use)
+            total_peritos = len(dfe_use)
             dfe_use = dfe_use[dfe_use["Interesses"].str.len() > 0].reset_index(drop=True)
-            if len(dfe_use) == 0:
+            removidos = total_peritos - len(dfe_use)
+            if removidos > 0:
+                st.info(f"🔎 {removidos} peritos removidos por não terem 'Interesses de pesquisa'.")
+
+            if dfe_use.empty:
                 st.error("Não há peritos com 'Interesses de pesquisa' preenchidos.")
                 return
-            remov = antes - len(dfe_use)
-            if remov > 0:
-                st.info(f"🔎 {remov} peritos removidos por não terem 'Interesses de pesquisa'.")
 
-            # -------- embeddings (pré-ranking rápido)
+            # -------- embeddings (pré-ranking)
             proj_vecs = embed_many(dfp_use["texto_proj"].tolist())
             exp_vecs  = embed_many((dfe_use["Interesses"] + ("; " + dfe_use["Organização"]).where(dfe_use["Organização"]!="", "")).tolist())
 
@@ -222,30 +264,37 @@ def run():
                     else:
                         S[i, j] = _cos(proj_vecs[i], exp_vecs[j])
 
-            # remover conflitos
+            # remover conflitos (nome/org do perito presentes no nome/resumo do projeto)
+            conflict_log = []
             for i in range(P):
                 prow = dfp_use.iloc[i]
                 for j in range(E):
                     erow = dfe_use.iloc[j]
                     if has_conflict({"Nome": prow["Nome"], "Resumo": prow["Resumo"]},
                                     {"Nome": erow["Nome"], "Organização": erow["Organização"]}):
+                        conflict_log.append((prow["Nº Projecto"], erow["Nome"], "org/nome coincide"))
                         S[i, j] = -1e9
 
-            # -------- por projeto: topN por embeddings -> LLM re-ranking -> 3..5
+            # -------- por projeto: topN por embeddings -> LLM re-ranking -> dinâmico 3..5 (ou fixo)
             linhas = []
             for i in range(P):
-                # candidatos por score desc e válidos
-                idx_sorted = np.argsort(-S[i])
-                idx_sorted = [ix for ix in idx_sorted if S[i, ix] > -1e8]
-                if not idx_sorted:
+                idx_sorted = np.argsort(-S[i])  # desc
+                idx_validos = [ix for ix in idx_sorted if S[i, ix] > -1e8]
+                if not idx_validos:
                     linhas.append({
                         "Nº Projecto": dfp_use.iloc[i]["Nº Projecto"],
                         "Nome do Projeto": dfp_use.iloc[i]["Nome"],
-                        "Atribuição": "—"
+                        **({"Resumo": dfp_use.iloc[i]["Resumo"]} if incluir_resumo else {}),
+                        "Atribuição": "—",
+                        **({"Peritos (interesses)": "—"} if incluir_interesses else {})
                     })
                     continue
 
-                idx_top = idx_sorted[:topN]
+                if usar_full_list:
+                    idx_top = idx_validos  # sem pré-seleção
+                else:
+                    idx_top = idx_validos[:topN]
+
                 candidatos = [{
                     "Nome": dfe_use.iloc[j]["Nome"],
                     "Interesses": dfe_use.iloc[j]["Interesses"],
@@ -256,21 +305,35 @@ def run():
                     project_name=dfp_use.iloc[i]["Nome"],
                     project_summary=dfp_use.iloc[i]["Resumo"],
                     candidates=candidatos,
-                    k_min=int(k_min),
-                    k_max=int(k_max),
+                    k_min=3, k_max=5,
+                    fixed_k=int(fixed_k) if fixed_k else None,
                     debug=debug
                 )
+
+                # montar coluna opcional com interesses
+                if incluir_interesses:
+                    peritos_interesses = []
+                    # dicionário rápido para lookup
+                    dmap = {c["Nome"]: c["Interesses"] for c in candidatos}
+                    for nome in nomes_final:
+                        peritos_interesses.append(f"{nome} — {dmap.get(nome, '')}")
+                    col_interesses_val = " | ".join(peritos_interesses)
+                else:
+                    col_interesses_val = None
 
                 linhas.append({
                     "Nº Projecto": dfp_use.iloc[i]["Nº Projecto"],
                     "Nome do Projeto": dfp_use.iloc[i]["Nome"],
-                    "Atribuição": ", ".join(nomes_final) if nomes_final else "—"
+                    **({"Resumo": dfp_use.iloc[i]["Resumo"]} if incluir_resumo else {}),
+                    "Atribuição": ", ".join(nomes_final) if nomes_final else "—",
+                    **({"Peritos (interesses)": col_interesses_val} if incluir_interesses else {})
                 })
 
             out = pd.DataFrame(linhas)
             st.success("✅ Alocação concluída!")
             st.dataframe(out, use_container_width=True)
 
+            # download
             buf = BytesIO()
             out.to_excel(buf, index=False)
             st.download_button(
@@ -280,5 +343,12 @@ def run():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+            # relatório opcional de conflitos
+            if conflict_log:
+                with st.expander("🚫 Pares descartados por conflito"):
+                    confl_df = pd.DataFrame(conflict_log, columns=["Nº Projecto", "Perito", "Motivo"])
+                    st.dataframe(confl_df, use_container_width=True)
+
+# Execução direta opcional
 if __name__ == "__main__":
     run()
