@@ -3,8 +3,8 @@ import importlib.util
 import sys
 import os
 
-st.set_page_config(page_title="Classificador de Projetos ENEI", layout="wide")
-st.title("🤖 Classificador Inteligente de Projetos ENEI")
+st.set_page_config(page_title="Classificador de Projetos", layout="wide")
+st.title("🤖 Classificador de Projetos Automático")
 
 # Sidebar principal
 modo_app = st.sidebar.radio(
