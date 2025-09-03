@@ -174,7 +174,7 @@ def formatar_com_percentagens(dominios_llm_str, sims_dict):
 # UI
 # -------------------------------------------------
 def run():
-    st.markdown("### 🤖 Classificador Automático com LLM (Azure OpenAI)")
+    #st.markdown("### 🤖 Classificador Automático com LLM (Azure OpenAI)")
 
     # Diagnóstico Azure
     with st.expander("⚙️ Diagnóstico Azure/OpenAI"):
