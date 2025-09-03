@@ -145,7 +145,7 @@ Responde **apenas** com os nomes escolhidos, um por linha, sem numeração nem c
 # UI
 # =============================
 def run():
-    st.markdown("### 👥 Alocação de Peritos a Projetos (Resumo → Interesses)")
+    #st.markdown("### 👥 Alocação de Peritos a Projetos (Resumo → Interesses)")
 
     with st.expander("⚙️ Azure/OpenAI"):
         st.write(f"Chat deployment: {CHAT_DEPLOYMENT or '—'} | Embeddings: {EMB_DEPLOYMENT or '—'}")
