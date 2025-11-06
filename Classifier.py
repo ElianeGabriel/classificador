@@ -174,9 +174,6 @@ def formatar_com_percentagens(dominios_llm_str, sims_dict):
 # UI
 # -------------------------------------------------
 def run():
-    #st.markdown("### 🤖 Classificador Automático com LLM (Azure OpenAI)")
-
-    # Diagnóstico Azure
     with st.expander("⚙️ Diagnóstico Azure/OpenAI"):
         colA, colB, colC = st.columns(3)
         colA.write(f"Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT') or '—'}")
@@ -213,59 +210,53 @@ def run():
 
     xls = pd.ExcelFile(uploaded_file)
 
-    # Escolha de sheets: Título (opcional), Resumo (obrigatória), Manuais (opcional)
+    # Escolha de sheets
     sheet_titulo = st.selectbox("📄 Sheet do TÍTULO (opcional):", ["(Nenhuma)"] + xls.sheet_names)
     sheet_resumo = st.selectbox("📄 Sheet do RESUMO/Descrição (obrigatória):", xls.sheet_names)
     sheet_class  = st.selectbox("📑 Sheet com classificações manuais (opcional):", ["(Nenhuma)"] + xls.sheet_names)
 
-    # Ler dataframes
+    # Ler dataframes e escolher coluna ID
     df_resumo = pd.read_excel(xls, sheet_name=sheet_resumo)
-    if 'cand' not in df_resumo.columns:
-        st.error("A sheet de RESUMO tem de conter a coluna **'cand'**.")
-        st.stop()
+    id_col_resumo = st.selectbox("🆔 Coluna identificadora (sheet RESUMO):", df_resumo.columns)
 
     if sheet_titulo != "(Nenhuma)":
         df_titulo = pd.read_excel(xls, sheet_name=sheet_titulo)
-        if 'cand' not in df_titulo.columns:
-            st.error("A sheet de TÍTULO tem de conter a coluna **'cand'**.")
-            st.stop()
+        id_col_titulo = st.selectbox("🆔 Coluna identificadora (sheet TÍTULO):", df_titulo.columns)
     else:
-        df_titulo = pd.DataFrame(columns=["cand"])
+        df_titulo = pd.DataFrame()
+        id_col_titulo = None
 
     if sheet_class != "(Nenhuma)":
         df_class = pd.read_excel(xls, sheet_name=sheet_class)
-        if 'cand' not in df_class.columns:
-            st.error("A sheet de MANUAIS tem de conter a coluna **'cand'**.")
-            st.stop()
+        id_col_class = st.selectbox("🆔 Coluna identificadora (sheet MANUAIS):", df_class.columns)
     else:
-        df_class = pd.DataFrame(columns=["cand"])
+        df_class = pd.DataFrame()
+        id_col_class = None
 
-    # Normalizar cand
-    df_resumo["cand"] = df_resumo["cand"].apply(_strip)
-    if not df_titulo.empty: df_titulo["cand"] = df_titulo["cand"].apply(_strip)
-    if not df_class.empty:  df_class["cand"]  = df_class["cand"].apply(_strip)
+    # Normalizar ID
+    df_resumo[id_col_resumo] = df_resumo[id_col_resumo].apply(_strip)
+    if not df_titulo.empty: df_titulo[id_col_titulo] = df_titulo[id_col_titulo].apply(_strip)
+    if not df_class.empty:  df_class[id_col_class]  = df_class[id_col_class].apply(_strip)
 
     # Auto-detetar colunas prováveis
     tit_kw  = ["título", "titulo", "designação", "designacao", "nome do projeto", "nome do projecto", "nome"]
-    res_kw  = ["resumo", "sumário", "sumario", "abstract", "descrição", "descricao", "objetivo", "objectivo", "descricao do projeto", "descrição do projeto"]
+    res_kw  = ["resumo", "sumário", "sumario", "abstract", "descrição", "descricao", "objetivo", "objectivo"]
 
-    # Escolha manual com sugestões
     guess_resumo = guess_column(df_resumo.columns, res_kw) or df_resumo.columns[0]
-    col_resumo = st.selectbox("📋 Coluna principal do RESUMO/Descrição (sheet resumo):", df_resumo.columns,
+    col_resumo = st.selectbox("📋 Coluna principal do RESUMO/Descrição:", df_resumo.columns,
                               index=df_resumo.columns.get_loc(guess_resumo))
-
     alt_resumo_cols = st.multiselect(
-        "Fallback para RESUMO (usado se a principal vier vazia na linha):",
+        "Fallback para RESUMO:",
         [c for c in df_resumo.columns if c != col_resumo],
         default=[c for c in df_resumo.columns if c != col_resumo and guess_column([c], res_kw)]
     )
 
     if not df_titulo.empty:
         guess_titulo = guess_column(df_titulo.columns, tit_kw) or df_titulo.columns[0]
-        col_titulo = st.selectbox("📝 Coluna principal do TÍTULO/Designação (sheet título):", df_titulo.columns,
+        col_titulo = st.selectbox("📝 Coluna principal do TÍTULO:", df_titulo.columns,
                                   index=df_titulo.columns.get_loc(guess_titulo))
         alt_titulo_cols = st.multiselect(
-            "Fallback para TÍTULO (usado se a principal vier vazia na linha):",
+            "Fallback para TÍTULO:",
             [c for c in df_titulo.columns if c != col_titulo],
             default=[c for c in df_titulo.columns if c != col_titulo and guess_column([c], tit_kw)]
         )
@@ -273,114 +264,75 @@ def run():
         col_titulo = None
         alt_titulo_cols = []
 
-    # Construir colunas coalescidas
-    df_resumo = df_resumo.copy()
+    # Coalescer
     df_resumo["__RESUMO__"] = df_resumo.apply(lambda r: _strip(r.get(col_resumo)) or coalesce_row(r, alt_resumo_cols), axis=1)
-
     if not df_titulo.empty:
-        df_titulo = df_titulo.copy()
         df_titulo["__TITULO__"] = df_titulo.apply(lambda r: _strip(r.get(col_titulo)) or coalesce_row(r, alt_titulo_cols), axis=1)
-        df_base = df_resumo.merge(df_titulo[["cand", "__TITULO__"]], on="cand", how="left")
+        df_base = df_resumo.merge(df_titulo[[id_col_titulo, "__TITULO__"]], left_on=id_col_resumo, right_on=id_col_titulo, how="left")
     else:
         df_base = df_resumo.copy()
-        df_base["__TITULO__"] = ""  # opcional
+        df_base["__TITULO__"] = ""
 
-    # Filtrar apenas linhas com conteúdo útil: resumo é obrigatório; título é opcional
+    # Filtrar válidos
     mask_validos = df_base["__RESUMO__"].astype(str).str.strip().ne("")
     df_validos = df_base[mask_validos].copy()
 
     if df_validos.empty:
-        st.error("🚫 A coluna de RESUMO/Descrição (com fallbacks) está vazia em todas as linhas. Ajusta as colunas.")
+        st.error("🚫 A coluna de RESUMO/Descrição está vazia.")
         st.stop()
 
-    # Preparar classificações manuais (opcional)
+    # Classificações manuais
     if not df_class.empty:
-        possiveis_man = [c for c in df_class.columns if c != "cand"]
-        col_manual = st.selectbox("✅ Coluna das classificações manuais (sheet manuais):", possiveis_man or ["(Nenhuma)"])
+        possiveis_man = [c for c in df_class.columns if c != id_col_class]
+        col_manual = st.selectbox("✅ Coluna das classificações manuais:", possiveis_man or ["(Nenhuma)"])
         if possiveis_man and col_manual != "(Nenhuma)":
-            df_class = df_class.groupby("cand").agg({
+            df_class = df_class.groupby(id_col_class).agg({
                 col_manual: lambda x: "; ".join(sorted(set(_strip(v) for v in x if _strip(v))))
             }).rename(columns={col_manual: "Classificação Manual"}).reset_index()
         else:
-            df_class = pd.DataFrame(columns=["cand", "Classificação Manual"])
+            df_class = pd.DataFrame(columns=[id_col_class, "Classificação Manual"])
     else:
-        df_class = pd.DataFrame(columns=["cand", "Classificação Manual"])
+        df_class = pd.DataFrame(columns=["ID", "Classificação Manual"])
 
-    # Merge com manuais (se houver)
+    # Merge final
     if not df_class.empty:
-        df_final = df_validos.merge(df_class, on="cand", how="inner")
+        df_final = df_validos.merge(df_class, left_on=id_col_resumo, right_on=id_col_class, how="inner")
         tem_intersecao = not df_final.empty
     else:
         df_final = df_validos.copy()
         df_final["Classificação Manual"] = ""
         tem_intersecao = True
 
-    # Diagnóstico
-    st.info(
-        "🧾 Contagens | "
-        f"Linhas sheet RESUMO: {len(df_resumo)} | "
-        f"Com RESUMO (após coalesce): {len(df_validos)} | "
-        f"Sheet TÍTULO: {'(Nenhuma)' if col_titulo is None else sheet_titulo} | "
-        f"Linhas sheet MANUAIS: {len(df_class) if 'Classificação Manual' in df_class.columns else 0} | "
-        f"Interseção cands: {'N/A' if df_class.empty else len(set(df_validos['cand']).intersection(set(df_class['cand'])))} | "
-        f"Linhas após merge: {len(df_final)}"
-    )
+    st.info(f"Linhas válidas: {len(df_final)}")
 
-    if not tem_intersecao:
-        st.warning("Não há interseção de 'cand' entre dados e manuais. Vou **prosseguir sem classificações manuais**.")
-        df_final = df_validos.copy()
-        df_final["Classificação Manual"] = ""
-
-    # Quantidade
     quantidade = st.radio("Quantas candidaturas queres classificar?", ["1", "5", "10", "20", "50", "Todas"], horizontal=True)
     df_filtrado = df_final if quantidade == "Todas" else df_final.head(int(quantidade))
 
-    # Carregar domínios ENEI
     ficheiro_desc = config_enei[versao_enei]["ficheiro"]
     sheet_desc   = config_enei[versao_enei]["sheet"]
     dominios = carregar_dominios(ficheiro_desc, sheet_desc)
 
-    # Embeddings (opcional)
-    mostrar_percentagens = st.checkbox(
-        "Adicionar percentagens baseadas em similaridade (embeddings)",
-        value=False,
-        help="Se ligado, as percentagens são calculadas por similaridade coseno entre o texto do projeto e as descrições dos domínios."
-    )
+    mostrar_percentagens = st.checkbox("Adicionar percentagens baseadas em similaridade (embeddings)", value=False)
     emb_dom_map = {}
     if mostrar_percentagens:
         if not EMB_DEPLOYMENT:
-            st.warning("Defina **AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT** para usar percentagens por similaridade.")
+            st.warning("Defina **AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT**.")
         else:
             emb_dom_map = embeddings_dos_dominios_cache(dominios, versao_enei)
 
-    st.info(f"🧮 Estimativa rápida: ~{len(df_filtrado) * 600} tokens (aprox.)")
-    modo_debug = st.checkbox("🛠️ Modo debug (mostrar prompt e resposta crua por linha)", value=False)
+    modo_debug = st.checkbox("🛠️ Modo debug", value=False)
 
-    # Classificar
     if st.button("🚀 Classificar com LLM", use_container_width=True):
         resultados = []
         with st.spinner("A classificar projetos..."):
             for _, row in df_filtrado.iterrows():
-                titulo = _strip(row["__TITULO__"])  # pode ser vazio
-                resumo = _strip(row["__RESUMO__"])  # obrigatório
+                titulo = _strip(row["__TITULO__"])
+                resumo = _strip(row["__RESUMO__"])
+                id_val = row[id_col_resumo]
 
                 prompt = preparar_prompt(titulo, resumo, dominios)
                 resposta = classificar_llm(prompt)
-
-                if not resposta:
-                    st.error(f"❌ LLM devolveu vazio. cand={row['cand']} | Título='{titulo[:80]}'")
-                    if modo_debug:
-                        with st.expander(f"Debug cand={row['cand']}"):
-                            st.code(prompt, language="markdown")
-                            st.write("**Resposta crua do LLM:** (string vazia)")
-                    dominios_llm = "Indefinido"
-                else:
-                    if modo_debug:
-                        with st.expander(f"Debug cand={row['cand']}"):
-                            st.code(prompt, language="markdown")
-                            st.write("**Resposta crua do LLM:**")
-                            st.text(resposta)
-                    dominios_llm = extrair_resposta_formatada(resposta)
+                dominios_llm = extrair_resposta_formatada(resposta) if resposta else "Indefinido"
 
                 saida = dominios_llm
                 if mostrar_percentagens and dominios_llm.lower() != "indefinido" and emb_dom_map:
@@ -388,23 +340,22 @@ def run():
                     saida = formatar_com_percentagens(dominios_llm, sims)
 
                 resultados.append({
-                    "cand": row["cand"],
+                    "ID": id_val,
                     "Projeto (Título opcional)": titulo,
                     "Resumo/Descrição": resumo,
                     "Classificação Manual": row.get("Classificação Manual", ""),
                     "Domínios LLM": saida
                 })
 
-        if not resultados:
-            st.error("🚫 Nada classificado. Ajusta as colunas/sheets ou testa o Azure no painel de diagnóstico.")
-        else:
+        if resultados:
             final_df = pd.DataFrame(resultados)
             final_df.index += 1
             st.session_state["classificacoes_llm"] = final_df
+            st.success("✅ Classificação concluída!")
+        else:
+            st.error("🚫 Nada classificado.")
 
-    # Resultados + Download
     if "classificacoes_llm" in st.session_state:
-        st.success("✅ Classificação concluída com sucesso!")
         st.markdown("### 🔎 Resultados")
         st.dataframe(st.session_state["classificacoes_llm"], use_container_width=True)
 
