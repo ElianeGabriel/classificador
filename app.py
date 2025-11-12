@@ -3,6 +3,8 @@ import importlib.util
 import sys
 import os
 from pathlib import Path
+import base64  
+
 
 def set_background(image_filename: str, opacity: float = 0.10):
     """
