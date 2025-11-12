@@ -51,7 +51,7 @@ def set_background(image_filename: str, opacity: float = 0.10):
 # chama a função com o nome da tua imagem
 set_background("ANI_Screen Call_02.png", opacity=0.10)
 
-st.markdown(page_bg_css, unsafe_allow_html=True)
+#st.markdown(page_bg_css, unsafe_allow_html=True)
 st.set_page_config(page_title="Classificador de Projetos", layout="wide")
 st.title("🤖 Classificador Automático")
 
