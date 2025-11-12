@@ -2,7 +2,26 @@ import streamlit as st
 import importlib.util
 import sys
 import os
+from pathlib import Path
 
+# Caminho da imagem
+background_path = Path(__file__).parent / "ANI_Screen Call_02.png"
+background_url = background_path.as_posix()
+
+# CSS para definir o fundo
+page_bg_css = f"""
+<style>
+[data-testid="stAppViewContainer"] {{
+    background: url("file://{background_url}") no-repeat center center fixed;
+    background-size: cover;
+}}
+[data-testid="stHeader"], [data-testid="stToolbar"] {{
+    background: rgba(0, 0, 0, 0);
+}}
+</style>
+"""
+
+st.markdown(page_bg_css, unsafe_allow_html=True)
 st.set_page_config(page_title="Classificador de Projetos", layout="wide")
 st.title("🤖 Classificador Automático")
 
