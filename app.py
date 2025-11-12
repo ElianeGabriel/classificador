@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import base64  
 
-
 def set_background(image_filename: str, opacity: float = 0.10):
     """
     Define imagem de fundo via CSS com base64.
@@ -20,16 +19,13 @@ def set_background(image_filename: str, opacity: float = 0.10):
         data = f.read()
     b64 = base64.b64encode(data).decode()
 
-    # Vários seletores para diferentes versões do Streamlit
     css = f"""
     <style>
-    /* Fundo do corpo da app */
     html, body, .stApp {{
         height: 100%;
         background: none !important;
     }}
 
-    /* Conteúdo principal */
     [data-testid="stAppViewContainer"] > .main {{
         background-image:
           linear-gradient(rgba(255,255,255,{opacity}), rgba(255,255,255,{opacity})),
@@ -40,12 +36,10 @@ def set_background(image_filename: str, opacity: float = 0.10):
         background-attachment: fixed;
     }}
 
-    /* Cabeçalho transparente */
     [data-testid="stHeader"] {{
         background: rgba(0,0,0,0);
     }}
 
-    /* Sidebar (opcional): comenta se não quiseres */
     [data-testid="stSidebar"] > div:first-child {{
         background: rgba(255,255,255,0.85);
         backdrop-filter: blur(2px);
