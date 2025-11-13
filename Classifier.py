@@ -75,7 +75,7 @@ def extrair_resposta_formatada(resposta):
     return ", ".join(partes[:2])
 
 # -------------------------------------------------
-# Ficheiro de domínios (comum a ENEI e EREI)
+# Ficheiro de domínios (ENEI / EREI)
 # -------------------------------------------------
 def carregar_dominios(ficheiro, sheet):
     try:
@@ -118,9 +118,6 @@ def classificar_llm(prompt_texto):
         )
         ch = resp.choices[0]
         content = (ch.message.content or "").strip()
-        finish = getattr(ch, "finish_reason", None)
-        if finish and finish != "stop":
-            st.warning(f"LLM terminou com finish_reason='{finish}'.")
         return content
     except Exception as e:
         st.error(f"Erro no Azure OpenAI (chat): {e}")
@@ -174,67 +171,51 @@ def formatar_com_percentagens(dominios_llm_str, sims_dict):
 # UI
 # -------------------------------------------------
 def run():
-    with st.expander("⚙️ Diagnóstico Azure/OpenAI"):
-        colA, colB, colC = st.columns(3)
-        colA.write(f"Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT') or '—'}")
-        colB.write(f"API Version: {os.getenv('AZURE_OPENAI_API_VERSION') or '—'}")
-        colC.write(f"Chat Deployment: {CHAT_DEPLOYMENT or '—'}")
-        if st.button("▶️ Testar Azure Chat"):
-            try:
-                r = client.chat.completions.create(
-                    model=CHAT_DEPLOYMENT,
-                    messages=[{"role": "user", "content": "pong?"}],
-                    temperature=0
-                )
-                st.success(f"OK: {r.choices[0].message.content!r}")
-            except Exception as e:
-                st.error(f"Falha: {e}")
+    st.subheader("🧠 Classificação Automática (ENEI / EREI)")
 
     if not CHAT_DEPLOYMENT:
-        st.error("**AZURE_OPENAI_DEPLOYMENT** não definido.")
+        st.error("Variável **AZURE_OPENAI_DEPLOYMENT** não definida.")
         st.stop()
 
-    # ====== Seleção da taxonomia: ENEI vs EREI ======
-    tipo_taxonomia = st.sidebar.radio("Taxonomia:", ["ENEI", "EREI"], horizontal=True)
-    st.session_state["taxonomia"] = tipo_taxonomia
+    # =========================
+    # Escolha da TAXONOMIA
+    # =========================
+    taxonomia = st.sidebar.radio("Taxonomia:", ["ENEI", "EREI"], horizontal=True)
 
-    # Config ENEI (ficheiros locais fixos)
-    config_enei = {
-        "ENEI 2020": {"ficheiro": "descricao2020.xlsx", "sheet": "Eixos", "etiqueta": "ENEI 2020"},
-        "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios", "etiqueta": "ENEI 2030"}
-    }
+    ficheiro_desc = None
+    sheet_desc = None
 
-    # Se ENEI: escolher versão
-    if tipo_taxonomia == "ENEI":
+    if taxonomia == "ENEI":
         versao_enei = st.sidebar.radio("Versão ENEI:", ["ENEI 2020", "ENEI 2030"])
         st.session_state["versao_enei"] = versao_enei
-        fonte_dom_ficheiro = config_enei[versao_enei]["ficheiro"]
-        fonte_dom_sheet   = config_enei[versao_enei]["sheet"]
-        etiqueta_taxonomia = config_enei[versao_enei]["etiqueta"]
-        dominios = carregar_dominios(fonte_dom_ficheiro, fonte_dom_sheet)
-
-    # Se EREI: carregar ficheiro e escolher região (sheet)
+        config_enei = {
+            "ENEI 2020": {"ficheiro": "descricao2020.xlsx", "sheet": "Eixos"},
+            "ENEI 2030": {"ficheiro": "descricao2030.xlsx", "sheet": "Dominios"}
+        }
+        ficheiro_desc = config_enei[versao_enei]["ficheiro"]
+        sheet_desc = config_enei[versao_enei]["sheet"]
+        etiqueta_taxonomia = versao_enei
     else:
-        st.sidebar.markdown("**EREI:** carrega o ficheiro com as regiões por sheet.")
-        erei_file = st.sidebar.file_uploader("📁 Ficheiro EREI (.xlsx)", type=["xlsx"], key="erei_up")
-        if not erei_file:
-            st.warning("Carrega o ficheiro das EREI para continuar (cada região numa sheet).")
-            st.stop()
-
+        # EREI: ficheiro único com várias sheets (uma por região)
+        ficheiro_erei = "DominiosEREI_10112025.xlsx"
         try:
-            erei_xls = pd.ExcelFile(erei_file)
-            sheet_regiao = st.sidebar.selectbox("Região (sheet EREI):", erei_xls.sheet_names)
+            xls_erei = pd.ExcelFile(ficheiro_erei)
+            sheet_erei = st.sidebar.selectbox("Região (sheet EREI):", xls_erei.sheet_names)
         except Exception as e:
-            st.error(f"Erro a ler o ficheiro EREI: {e}")
+            st.error(f"Não consegui abrir o ficheiro das EREI ({ficheiro_erei}): {e}")
             st.stop()
+        ficheiro_desc = ficheiro_erei
+        sheet_desc = sheet_erei
+        etiqueta_taxonomia = f"EREI – {sheet_erei}"
 
-        etiqueta_taxonomia = f"EREI – {sheet_regiao}"
-        dominios = carregar_dominios(erei_file, sheet_regiao)
+    st.session_state["versao_enei"] = etiqueta_taxonomia
 
-    # ====== Upload dos projetos ======
-    uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos reais (.xlsx):", type=["xlsx"])
+    # =========================
+    # Carregar ficheiro de projetos
+    # =========================
+    uploaded_file = st.file_uploader("📁 Upload do ficheiro de projetos (.xlsx):", type=["xlsx"])
     if not uploaded_file:
-        st.info("Carrega um ficheiro .xlsx para começar.")
+        st.info("Carrega um ficheiro Excel para começar.")
         return
 
     xls = pd.ExcelFile(uploaded_file)
@@ -244,7 +225,7 @@ def run():
     sheet_resumo = st.selectbox("📄 Sheet do RESUMO/Descrição (obrigatória):", xls.sheet_names)
     sheet_class  = st.selectbox("📑 Sheet com classificações manuais (opcional):", ["(Nenhuma)"] + xls.sheet_names)
 
-    # Ler dataframes e escolher coluna ID
+    # Ler dataframes
     df_resumo = pd.read_excel(xls, sheet_name=sheet_resumo)
     id_col_resumo = st.selectbox("🆔 Coluna identificadora (sheet RESUMO):", df_resumo.columns)
 
@@ -267,33 +248,25 @@ def run():
     if not df_titulo.empty: df_titulo[id_col_titulo] = df_titulo[id_col_titulo].apply(_strip)
     if not df_class.empty:  df_class[id_col_class]  = df_class[id_col_class].apply(_strip)
 
-    # Auto-detetar colunas prováveis
-    tit_kw  = ["título", "titulo", "designação", "designacao", "nome do projeto", "nome do projecto", "nome"]
-    res_kw  = ["resumo", "sumário", "sumario", "abstract", "descrição", "descricao", "objetivo", "objectivo"]
+    # Detectar colunas
+    tit_kw  = ["título", "titulo", "designação", "designacao", "nome do projeto"]
+    res_kw  = ["resumo", "sumário", "sumario", "descrição", "descricao", "objetivo", "objectivo"]
 
     guess_resumo = guess_column(df_resumo.columns, res_kw) or df_resumo.columns[0]
     col_resumo = st.selectbox("📋 Coluna principal do RESUMO/Descrição:", df_resumo.columns,
                               index=df_resumo.columns.get_loc(guess_resumo))
-    alt_resumo_cols = st.multiselect(
-        "Fallback para RESUMO:",
-        [c for c in df_resumo.columns if c != col_resumo],
-        default=[c for c in df_resumo.columns if c != col_resumo and guess_column([c], res_kw)]
-    )
+    alt_resumo_cols = st.multiselect("Fallback para RESUMO:", [c for c in df_resumo.columns if c != col_resumo])
 
     if not df_titulo.empty:
         guess_titulo = guess_column(df_titulo.columns, tit_kw) or df_titulo.columns[0]
         col_titulo = st.selectbox("📝 Coluna principal do TÍTULO:", df_titulo.columns,
                                   index=df_titulo.columns.get_loc(guess_titulo))
-        alt_titulo_cols = st.multiselect(
-            "Fallback para TÍTULO:",
-            [c for c in df_titulo.columns if c != col_titulo],
-            default=[c for c in df_titulo.columns if c != col_titulo and guess_column([c], tit_kw)]
-        )
+        alt_titulo_cols = st.multiselect("Fallback para TÍTULO:", [c for c in df_titulo.columns if c != col_titulo])
     else:
         col_titulo = None
         alt_titulo_cols = []
 
-    # Coalescer
+    # Combinar e limpar
     df_resumo["__RESUMO__"] = df_resumo.apply(lambda r: _strip(r.get(col_resumo)) or coalesce_row(r, alt_resumo_cols), axis=1)
     if not df_titulo.empty:
         df_titulo["__TITULO__"] = df_titulo.apply(lambda r: _strip(r.get(col_titulo)) or coalesce_row(r, alt_titulo_cols), axis=1)
@@ -302,12 +275,9 @@ def run():
         df_base = df_resumo.copy()
         df_base["__TITULO__"] = ""
 
-    # Filtrar válidos
-    mask_validos = df_base["__RESUMO__"].astype(str).str.strip().ne("")
-    df_validos = df_base[mask_validos].copy()
-
+    df_validos = df_base[df_base["__RESUMO__"].astype(str).str.strip().ne("")].copy()
     if df_validos.empty:
-        st.error("🚫 A coluna de RESUMO/Descrição está vazia.")
+        st.error("🚫 Nenhum resumo válido encontrado.")
         st.stop()
 
     # Classificações manuais (opcional)
@@ -323,32 +293,32 @@ def run():
     else:
         df_class = pd.DataFrame(columns=["ID", "Classificação Manual"])
 
-    # Merge final (se houver manuais)
+    # Merge final
     if not df_class.empty:
         df_final = df_validos.merge(df_class, left_on=id_col_resumo, right_on=id_col_class, how="inner")
-        tem_intersecao = not df_final.empty
-        if not tem_intersecao:
-            st.info("Não há interseção de IDs entre os dados e as classificações manuais. Vou prosseguir sem manuais.")
+        if df_final.empty:
+            st.info("Sem correspondência com classificações manuais. Prossegue sem.")
             df_final = df_validos.copy()
             df_final["Classificação Manual"] = ""
     else:
         df_final = df_validos.copy()
         df_final["Classificação Manual"] = ""
 
-    st.info(f"Linhas válidas a classificar: {len(df_final)}")
+    st.info(f"Linhas válidas: {len(df_final)}")
 
     quantidade = st.radio("Quantas candidaturas queres classificar?", ["1", "5", "10", "20", "50", "Todas"], horizontal=True)
     df_filtrado = df_final if quantidade == "Todas" else df_final.head(int(quantidade))
 
-    # Percentagens por similaridade (opcional)
-    mostrar_percentagens = st.checkbox("Adicionar percentagens baseadas em similaridade (embeddings)", value=False)
-    emb_dom_map = {}
-    if mostrar_percentagens:
-        if not EMB_DEPLOYMENT:
-            st.warning("Defina **AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT**.")
-        else:
-            emb_dom_map = embeddings_dos_dominios_cache(dominios, etiqueta_taxonomia)
+    # Carregar domínios ENEI/EREI
+    dominios = carregar_dominios(ficheiro_desc, sheet_desc)
 
+    # Similaridade opcional
+    mostrar_percentagens = st.checkbox("Adicionar percentagens por embeddings", value=False)
+    emb_dom_map = {}
+    if mostrar_percentagens and EMB_DEPLOYMENT:
+        emb_dom_map = embeddings_dos_dominios_cache(dominios, etiqueta_taxonomia)
+
+    # ------------------ CLASSIFICAÇÃO ------------------
     if st.button("🚀 Classificar com LLM", use_container_width=True):
         resultados = []
         with st.spinner("A classificar projetos..."):
@@ -359,7 +329,7 @@ def run():
 
                 prompt = preparar_prompt(titulo, resumo, dominios, etiqueta_taxonomia)
                 resposta = classificar_llm(prompt)
-                dominios_llm = extrair_resposta_formatada(resposta) if resposta else "Indefinido"
+                dominios_llm = extrair_resposta_formatada(resposta)
 
                 saida = dominios_llm
                 if mostrar_percentagens and dominios_llm.lower() != "indefinido" and emb_dom_map:
@@ -368,7 +338,7 @@ def run():
 
                 resultados.append({
                     "ID": id_val,
-                    "Projeto (Título opcional)": titulo,
+                    "Título": titulo,
                     "Resumo/Descrição": resumo,
                     "Classificação Manual": row.get("Classificação Manual", ""),
                     "Domínios LLM": saida
@@ -380,31 +350,22 @@ def run():
             st.session_state["classificacoes_llm"] = final_df
             st.success("✅ Classificação concluída!")
         else:
-            st.error("🚫 Nada classificado.")
+            st.error("🚫 Nenhum projeto classificado.")
 
+    # ------------------ RESULTADOS ------------------
     if "classificacoes_llm" in st.session_state:
         st.markdown("### 🔎 Resultados")
         st.dataframe(st.session_state["classificacoes_llm"], use_container_width=True)
 
         buffer = BytesIO()
-        # etiqueta para nome do ficheiro
-        etiqueta_saida = (st.session_state.get('taxonomia') or 'enei').lower()
-        if etiqueta_saida == "enei":
-            etiqueta_saida = (st.session_state.get('versao_enei','enei')).replace(" ", "").lower()
-        else:
-            # EREI: inclui região se existir
-            etiqueta_saida = "erei"
+        st.session_state["classificacoes_llm"].to_excel(buffer, index=False)
+        file_label = etiqueta_taxonomia.replace(" ", "_").lower()
         st.download_button(
             label="📥 Download (.xlsx)",
-            data=to_excel_bytes(st.session_state["classificacoes_llm"]),
-            file_name=f"classificacao_llm_{etiqueta_saida}.xlsx",
+            data=buffer.getvalue(),
+            file_name=f"classificacao_llm_{file_label}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-def to_excel_bytes(df: pd.DataFrame) -> bytes:
-    buf = BytesIO()
-    df.to_excel(buf, index=False)
-    return buf.getvalue()
 
 if __name__ == "__main__":
     run()
