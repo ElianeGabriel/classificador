@@ -87,10 +87,20 @@ def carregar_dominios(ficheiro, sheet):
         st.error(f"Erro ao ler ficheiro de domínios: {e}")
         st.stop()
 
-    if "Dominios" not in df.columns:
-        st.error("A sheet de domínios tem de ter a coluna **'Dominios'**.")
-        st.stop()
+    # Aceitar variações: Domínios, Domínio, Eixo, Eixos
+    col_dom = None
+    for c in df.columns:
+        if re.search(r"dom[ií]n(i|o|os)?|eixo", c, re.IGNORECASE):
+            col_dom = c
+            break
 
+    if not col_dom:
+        st.error("Não encontrei uma coluna de domínios (procuro algo como 'Domínios' ou 'Eixo').")
+        st.stop()
+    else:
+        df = df.rename(columns={col_dom: "Dominios"})
+
+    # Continua igual
     df = df.dropna(subset=['Dominios']).copy()
     dominios = []
     for _, row in df.iterrows():
